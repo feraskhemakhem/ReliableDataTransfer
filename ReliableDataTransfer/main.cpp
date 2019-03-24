@@ -39,7 +39,7 @@ void transfer(char* argv[]) {
 	SenderSocket ss; // instance of your class
 	if ((status = ss.Open(targetHost, MAGIC_PORT, senderWindow, &lp)) != STATUS_OK) {
 		// error handling: print status and quit
-		printf("Main:\t connect failed with status %d", status);
+		printf("Main:\tconnect failed with status %d", status);
 	}
 
 
@@ -99,8 +99,13 @@ int main(int argc, char* argv[])
 		printf("Invalid RTT. Please rerun with positive RTT less than 30s\n");
 		exit(-1);
 	}
+	else if (atof(argv[5]) < 0 || atof(argv[5]) >= 1 || atof(argv[6]) < 0 || atof(argv[6]) >= 1) {
+		// 2.3(c) probabilities of loss must bet in [0, 1)
+		printf("Invalid loss probability. Please rerun with loss probabilities in [0, 1)\n");
+		exit(-1);
+	}
 	else if (atoi(argv[3]) < 1 || atoi(argv[3]) > 1e6) {
-		// 2.3(c) window size / router buffer size must be between 1 and 1M packets
+		// 2.3(d) window size / router buffer size must be between 1 and 1M packets
 		printf("Invalid window size. Please rerun with a window size between 1 packet and 1M packets\n");
 		exit(-1);
 	}
