@@ -52,12 +52,10 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	}
 
 	// bind port 0
+	this->link_prop = link_prop;
 	struct sockaddr_in local;
 	initialize_sockaddr(local);
-	/*memset(&local, 0, sizeof(local));
-	local.sin_family = AF_INET;					// sets the family to IPv4
-	local.sin_addr.s_addr = INADDR_ANY;			// allows me to receive packets on all physics interfaces of the system
-	local.sin_port = htons(0);		*/			// provides the port 0 to bind to... 
+
 	if (bind(sock, (struct sockaddr*)&local, sizeof(local)) == SOCKET_ERROR) { // let the OS select next available port for me
 		// handle errors
 		printf("Bind errors\n");
@@ -65,8 +63,6 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	}
 
 	// for sendto
-	int seq_number = 0;
-	struct sockaddr_in request;
 	initialize_sockaddr(request, targetHost, port);
 
 	// for select
@@ -76,11 +72,6 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	tp.tv_usec = (RTO - int(RTO))*1e3; // get the decimals of the RTO
 	tp.tv_sec = int(RTO); // get the full seconds of RTO
 
-	// send request for handshake
-	//memset(&request, 0, sizeof(request));
-	//request.sin_family = AF_INET;
-	//request.sin_addr.s_addr = inet_addr(targetHost);	// server's IP
-	//request.sin_port = htons(port);			// port provided
 	SenderSynHeader sh{};
 	SenderDataHeader sender_data{};
 	sender_data.flags = Flags(1, 0, 0); // SYN is 1, rest are 0
@@ -137,13 +128,89 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	printf("[%.3f] <-- SYN-ACK %d window %d; setting initial RTO to %.3f\n", elapsed_synack, rh->ackSeq, rh->recvWnd, this->RTO);
 
 	elapsed_open = elapsed_synack - elapsed_open; // updating to get elapsed time for print after function is complete, in the main
+	elapsed_close = -1 * elapsed_synack;
 	return STATUS_OK; // implement error checking for part 5
 }
 
 int SenderSocket::Send(char* charBuf, int bytes) {
+	// if socket not open... aka if send called without open
+	// return NOT_CONNECTED;
 	return STATUS_OK; // implement error checking for part 5
 }
 
 int SenderSocket::Close() {
+	// for select
+	timeval tp;
+	fd_set fd;
+	// set timeout to 10
+	tp.tv_usec = (this->RTO - int(this->RTO))*1e3; // get the decimals of the RTO
+	tp.tv_sec = int(this->RTO); // get the full seconds of RTO
+
+	// send request for handshake
+	SenderSynHeader sh{};
+	SenderDataHeader sender_data{};
+	sender_data.flags = Flags(0, 0, 1); // FIN is 1, rest are 0
+	sender_data.seq = this->seq_number; // WIP
+	sh.lp = *(this->link_prop);
+	sh.sdh = sender_data;
+	for (int i = 1; i <=6; ++i) {
+		// tried too many times
+		if (i == 6) return TIMEOUT;
+
+		////////////////////////// send request to the server //////////////////////////
+		if ((packet_size = sendto(sock, (char*)&sh, sizeof(SenderSynHeader), 0, (struct sockaddr*)&request, sizeof(request))) == SOCKET_ERROR) {
+			printf("[%.3f] --> failed sendto with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
+			return FAILED_SEND;
+		}
+
+		double elapsed_send = (clock() - this->start_time) / 1000.0; // elapsed open is used for elapsed time if SYN and SYN-ACK work
+		printf("[%.3f] --> FIN %d (attempt %d of %d, RTO %.3f)\n", elapsed_send, seq_number, i, 5, this->RTO);
+
+		if (i == 1)
+			elapsed_close = elapsed_send - elapsed_close;
+
+		// return of the handshake
+
+		////////////////////////// get ready to recieve response and check for timeout //////////////////////////
+
+		FD_ZERO(&fd);					// clear set
+		FD_SET(sock, &fd);				// add your socket to the set
+		if ((packet_size = select(0, &fd, NULL, NULL, &tp)) != 0) {
+			// packet_size == 0 is when a timeout occurs
+			if (packet_size > 0) {
+				break; // break from the for loop because no more attempts are needed
+			}
+			// error checking
+			if (packet_size < 0) {
+				printf("socket error in select %d\n", WSAGetLastError());
+				return -1; // returning -1 because this error is unacceptable but not covered
+			}
+		}
+	}
+
+	////////////////////////// reading received data //////////////////////////
+	// initializations for receiving
+	char ans[MAX_PKT_SIZE];
+	struct sockaddr_in response;
+	int response_size = sizeof(response);
+
+	// in theory select told us that sock is ready to recvfrom, so no need to reattempt
+	if ((packet_size = recvfrom(sock, ans, MAX_PKT_SIZE, 0, (struct sockaddr*)&response, &response_size)) == SOCKET_ERROR) {
+		printf("[%.3f] <-- failed recvfrom with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
+		return FAILED_RECV;
+	}
+	ReceiverHeader *rh = (ReceiverHeader*)ans;
+	double elapsed_synack = (clock() - this->start_time) / 1000.0;
+	this->RTO = (elapsed_synack) * 3.0; // RTO = RTT * 3
+	printf("[%.3f] <-- FIN-ACK %d window %d; setting initial RTO to %.3f\n", elapsed_synack, rh->ackSeq, rh->recvWnd, this->RTO);
+
+	elapsed_open = elapsed_synack - elapsed_open; // updating to get elapsed time for print after function is complete, in the main
+
+
+	// close socket to end communication... if already closed or not open, error will yield
+	if (closesocket(sock) == SOCKET_ERROR) {
+		printf("[%.3f] --> failed to close socket with %d", WSAGetLastError()); // check if this is how they want it
+		return NOT_CONNECTED;
+	}
 	return STATUS_OK; // implement error checking for part 5
 }

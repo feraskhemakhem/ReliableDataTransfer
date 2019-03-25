@@ -39,7 +39,8 @@ void transfer(char* argv[]) {
 	SenderSocket ss; // instance of your class
 	if ((status = ss.Open(targetHost, MAGIC_PORT, senderWindow, &lp)) != STATUS_OK) {
 		// error handling: print status and quit
-		printf("Main:\tconnect failed with status %d", status);
+		printf("Main:\tconnect failed with status %d\n", status);
+		exit(-1);
 	}
 
 	printf("Main:\tconnected to %s in %.3f sec, pkt size %d bytes\n", targetHost, ss.get_elapsed_open(), ss.get_packet_size());
@@ -60,13 +61,15 @@ void transfer(char* argv[]) {
 		}
 		off += bytes;
 	}
-	
+	*/
 	/////////////////////////////// close ///////////////////////////////
 
 	if ((status = ss.Close()) != STATUS_OK) {
 		// error handing: print status and quit
-		printf("Main:\t connect failed with status %d", status);
-	}*/
+		printf("Main:\t connect failed with status %d\n", status);
+		exit(-1);
+	}
+	printf("Main:\ttransfer finished in %.3f sec\n", ss.get_elapsed_close());
 	
 }
 
