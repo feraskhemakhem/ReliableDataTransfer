@@ -32,16 +32,17 @@ void transfer(char* argv[]) {
 
 	LinkProperties lp;
 	lp.RTT = atof(argv[4]);
-	lp.speed = 1e6 * atof(argv[4]); // convert to megabits
+	lp.speed = 1e6 * atof(argv[7]); // convert to megabits
 	lp.pLoss[FORWARD_PATH] = atof(argv[5]);
 	lp.pLoss[RETURN_PATH] = atof(argv[6]);
-	// lp.bufferSize = senderWindow + // window size + max number of retransmissions
+	lp.bufferSize = senderWindow + 3; // window size + max number of retransmissions, which is 3 for Open
 	SenderSocket ss; // instance of your class
 	if ((status = ss.Open(targetHost, MAGIC_PORT, senderWindow, &lp)) != STATUS_OK) {
 		// error handling: print status and quit
 		printf("Main:\tconnect failed with status %d", status);
 	}
 
+	printf("Main:\tconnected to %s in %.3f sec, pkt size %d bytes\n", targetHost, ss.get_elapsed_open(), ss.get_packet_size());
 
 	/////////////////////////////// send ///////////////////////////////
 	/*
@@ -59,14 +60,14 @@ void transfer(char* argv[]) {
 		}
 		off += bytes;
 	}
-
+	
 	/////////////////////////////// close ///////////////////////////////
 
 	if ((status = ss.Close()) != STATUS_OK) {
 		// error handing: print status and quit
 		printf("Main:\t connect failed with status %d", status);
-	}
-	*/
+	}*/
+	
 }
 
 int main(int argc, char* argv[])

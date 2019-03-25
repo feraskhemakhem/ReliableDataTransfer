@@ -66,7 +66,6 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 
 	// for sendto
 	int seq_number = 0;
-	int bytes;
 	struct sockaddr_in request;
 	initialize_sockaddr(request, targetHost, port);
 
@@ -94,11 +93,13 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 
 
 		////////////////////////// send request to the server //////////////////////////
-		if ((bytes = sendto(sock, (char*)&sh, sizeof(SenderSynHeader), 0, (struct sockaddr*)&request, sizeof(request))) == SOCKET_ERROR) {
+		if ((packet_size = sendto(sock, (char*)&sh, sizeof(SenderSynHeader), 0, (struct sockaddr*)&request, sizeof(request))) == SOCKET_ERROR) {
 			printf("[%.3f] --> failed sendto with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
 			return FAILED_SEND;
 		}
-		printf("[%.3f] --> SYN %d (attempt %d of %d, RTO %.3f) to %s\n", (clock() - this->start_time)/1000.0, seq_number, i, 3, this->RTO, inet_ntoa(request.sin_addr));
+
+		elapsed_open = (clock() - this->start_time) / 1000.0; // elapsed open is used for elapsed time if SYN and SYN-ACK work
+		printf("[%.3f] --> SYN %d (attempt %d of %d, RTO %.3f) to %s\n", elapsed_open, seq_number, i, 3, this->RTO, inet_ntoa(request.sin_addr));
 
 		// return of the handshake
 
@@ -106,12 +107,13 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 
 		FD_ZERO(&fd);					// clear set
 		FD_SET(sock, &fd);				// add your socket to the set
-		if ((bytes = select(0, &fd, NULL, NULL, &tp)) != 0) {
-			// bytes == 0 is when a timeout occurs
-			if (bytes > 0) 
+		if ((packet_size = select(0, &fd, NULL, NULL, &tp)) != 0) {
+			// packet_size == 0 is when a timeout occurs
+			if (packet_size > 0) {
 				break; // break from the for loop because no more attempts are needed
+			}
 			// error checking
-			if (bytes < 0) {
+			if (packet_size < 0) {
 				printf("socket error in select %d\n", WSAGetLastError());
 				return -1; // returning -1 because this error is unacceptable but not covered
 			}
@@ -120,22 +122,21 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 
 	////////////////////////// reading received data //////////////////////////
 	// initializations for receiving
-	struct sockaddr_in response;
-	initialize_sockaddr(response, targetHost, port);
-	int response_size = sizeof(response);
 	char ans[MAX_PKT_SIZE];
+	struct sockaddr_in response;
+	int response_size = sizeof(response);
 
 	// in theory select told us that sock is ready to recvfrom, so no need to reattempt
-	if ((bytes = recvfrom(sock, ans, MAX_PKT_SIZE, 0, (struct sockaddr*)&response, &response_size)) == SOCKET_ERROR) {
+	if ((packet_size = recvfrom(sock, ans, MAX_PKT_SIZE, 0, (struct sockaddr*)&response, &response_size)) == SOCKET_ERROR) {
 		printf("[%.3f] <-- failed recvfrom with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
 		return FAILED_RECV;
 	}
 	ReceiverHeader *rh = (ReceiverHeader*)ans;
 	double elapsed_synack = (clock() - this->start_time) / 1000.0;
 	this->RTO = (elapsed_synack) * 3.0; // RTO = RTT * 3
-	printf("[%.3f] <-- SYN-ACK %d window %d; setting initial RTO to %.3f\n", elapsed_synack, seq_number, rh->recvWnd, this->RTO);
+	printf("[%.3f] <-- SYN-ACK %d window %d; setting initial RTO to %.3f\n", elapsed_synack, rh->ackSeq, rh->recvWnd, this->RTO);
 
-
+	elapsed_open = elapsed_synack - elapsed_open; // updating to get elapsed time for print after function is complete, in the main
 	return STATUS_OK; // implement error checking for part 5
 }
 
