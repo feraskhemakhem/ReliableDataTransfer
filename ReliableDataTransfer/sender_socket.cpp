@@ -164,7 +164,7 @@ int SenderSocket::Close() {
 		}
 
 		double elapsed_send = (clock() - this->start_time) / 1000.0; // elapsed open is used for elapsed time if SYN and SYN-ACK work
-		printf("[%.3f] --> FIN %d (attempt %d of %d, RTO %.3f)\n", elapsed_send, seq_number, i, 5, this->RTO);
+		printf("[%.3f] --> FIN %d (attempt %d of %d, RTO %.3f)\n", elapsed_send, this->seq_number, i, 5, this->RTO);
 
 		if (i == 1)
 			elapsed_close = elapsed_send - elapsed_close;
