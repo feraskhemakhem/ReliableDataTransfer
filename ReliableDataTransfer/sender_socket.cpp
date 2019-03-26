@@ -7,7 +7,7 @@
 #include "sender_socket.h"
 #include "stdafx.h"
 
-void SenderSocket::initialize_sockaddr(struct sockaddr_in& server, char* host, int port) {
+int SenderSocket::initialize_sockaddr(struct sockaddr_in& server, char* host, int port) {
 
 	// structure used in DNS lookups
 	struct hostent *remote;
@@ -25,8 +25,8 @@ void SenderSocket::initialize_sockaddr(struct sockaddr_in& server, char* host, i
 			// if not a valid IP, then do a DNS lookup
 			if ((remote = gethostbyname(host)) == NULL)
 			{
-				printf("failed with %d\n", WSAGetLastError());
-				exit(-1);
+				printf("[%.3f] --> target %s is invalid\n", (clock() - start_time) / 1000.0, host);
+				return INVALID_NAME;
 			}
 			else { // take the first IP address and copy into sin_addr 
 				memcpy((char *)&(server.sin_addr), remote->h_addr, remote->h_length);
@@ -40,9 +40,15 @@ void SenderSocket::initialize_sockaddr(struct sockaddr_in& server, char* host, i
 	else
 		server.sin_addr.s_addr = INADDR_ANY;			// allows me to receive packets on all physics interfaces of the system
 
+	return STATUS_OK;
 }
 
 int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperties* link_prop) {
+	if (sock != INVALID_SOCKET) {
+		// if sock value is already set then Open is already called
+		return ALREADY_CONNECTED;
+	}
+
 	/////////////////////// open UDP socket ///////////////////////
 	// initialize socket
 	if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) == INVALID_SOCKET) {
@@ -55,6 +61,7 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	this->link_prop = link_prop;
 	struct sockaddr_in local;
 	initialize_sockaddr(local);
+	this->RTT = link_prop->RTT;
 
 	if (bind(sock, (struct sockaddr*)&local, sizeof(local)) == SOCKET_ERROR) { // let the OS select next available port for me
 		// handle errors
@@ -63,7 +70,11 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	}
 
 	// for sendto
-	initialize_sockaddr(request, targetHost, port);
+	this->targetHost = targetHost;
+	this->port = port;
+	if ((packet_size = initialize_sockaddr(request, targetHost, port)) != STATUS_OK) {
+		return packet_size; // for INVALID_NAME
+	}
 
 	// for select
 	timeval tp;
@@ -89,8 +100,8 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 			return FAILED_SEND;
 		}
 
-		elapsed_open = (clock() - this->start_time) / 1000.0; // elapsed open is used for elapsed time if SYN and SYN-ACK work
-		printf("[%.3f] --> SYN %d (attempt %d of %d, RTO %.3f) to %s\n", elapsed_open, seq_number, i, 3, this->RTO, inet_ntoa(request.sin_addr));
+		elapsed_connect = (clock() - this->start_time) / 1000.0; // elapsed open is used for elapsed time if SYN and SYN-ACK work
+		printf("[%.3f] --> SYN %d (attempt %d of %d, RTO %.3f) to %s\n", this->RTT, seq_number, i, 3, this->RTO, inet_ntoa(request.sin_addr));
 
 		// return of the handshake
 
@@ -124,27 +135,39 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	}
 	ReceiverHeader *rh = (ReceiverHeader*)ans;
 	double elapsed_synack = (clock() - this->start_time) / 1000.0;
+	this->RTT = elapsed_synack - elapsed_connect; // updating to get elapsed time for print after function is complete, in the main
+	elapsed_connect = elapsed_synack - elapsed_connect;
+	//this->link_prop->RTT = this->RTT;
 	this->RTO = (elapsed_synack) * 3.0; // RTO = RTT * 3
 	printf("[%.3f] <-- SYN-ACK %d window %d; setting initial RTO to %.3f\n", elapsed_synack, rh->ackSeq, rh->recvWnd, this->RTO);
 
-	elapsed_open = elapsed_synack - elapsed_open; // updating to get elapsed time for print after function is complete, in the main
-	elapsed_close = -1 * elapsed_synack;
+	elapsed_finish = elapsed_synack;
 	return STATUS_OK; // implement error checking for part 5
 }
 
 int SenderSocket::Send(char* charBuf, int bytes) {
 	// if socket not open... aka if send called without open
-	// return NOT_CONNECTED;
+	if (sock == INVALID_SOCKET) {
+		return NOT_CONNECTED;
+	}
 	return STATUS_OK; // implement error checking for part 5
 }
 
 int SenderSocket::Close() {
+	if (sock == INVALID_SOCKET) {
+		// sock set in Open
+		return NOT_CONNECTED;
+	}
+
 	// for select
 	timeval tp;
 	fd_set fd;
 	// set timeout to 10
-	tp.tv_usec = (this->RTO - int(this->RTO))*1e3; // get the decimals of the RTO
+	tp.tv_usec = (this->RTO - int(this->RTO))*1e6; // get the decimals of the RTO
 	tp.tv_sec = int(this->RTO); // get the full seconds of RTO
+	struct sockaddr_in req;
+	initialize_sockaddr(req, this->targetHost, this->port);
+
 
 	// send request for handshake
 	SenderSynHeader sh{};
@@ -158,7 +181,7 @@ int SenderSocket::Close() {
 		if (i == 6) return TIMEOUT;
 
 		////////////////////////// send request to the server //////////////////////////
-		if ((packet_size = sendto(sock, (char*)&sh, sizeof(SenderSynHeader), 0, (struct sockaddr*)&request, sizeof(request))) == SOCKET_ERROR) {
+		if ((packet_size = sendto(sock, (char*)&sh, sizeof(SenderSynHeader), 0, (struct sockaddr*)&req, sizeof(req))) == SOCKET_ERROR) {
 			printf("[%.3f] --> failed sendto with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
 			return FAILED_SEND;
 		}
@@ -167,7 +190,7 @@ int SenderSocket::Close() {
 		printf("[%.3f] --> FIN %d (attempt %d of %d, RTO %.3f)\n", elapsed_send, this->seq_number, i, 5, this->RTO);
 
 		if (i == 1)
-			elapsed_close = elapsed_send - elapsed_close;
+			elapsed_finish = elapsed_send - elapsed_finish;
 
 		// return of the handshake
 
@@ -202,14 +225,12 @@ int SenderSocket::Close() {
 	ReceiverHeader *rh = (ReceiverHeader*)ans;
 	double elapsed_synack = (clock() - this->start_time) / 1000.0;
 	this->RTO = (elapsed_synack) * 3.0; // RTO = RTT * 3
-	printf("[%.3f] <-- FIN-ACK %d window %d; setting initial RTO to %.3f\n", elapsed_synack, rh->ackSeq, rh->recvWnd, this->RTO);
-
-	elapsed_open = elapsed_synack - elapsed_open; // updating to get elapsed time for print after function is complete, in the main
-
+	printf("[%.3f] <-- FIN-ACK %d window %d\n", elapsed_synack, rh->ackSeq, rh->recvWnd);
 
 	// close socket to end communication... if already closed or not open, error will yield
 	if (closesocket(sock) == SOCKET_ERROR) {
-		printf("[%.3f] --> failed to close socket with %d", WSAGetLastError()); // check if this is how they want it
+		// should not even get here
+		printf("[%.3f] --> failed to close socket with %d\n", (clock() - start_time) / 1000.0, WSAGetLastError()); // check if this is how they want it
 		return NOT_CONNECTED;
 	}
 	return STATUS_OK; // implement error checking for part 5

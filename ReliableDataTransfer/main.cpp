@@ -43,7 +43,7 @@ void transfer(char* argv[]) {
 		exit(-1);
 	}
 
-	printf("Main:\tconnected to %s in %.3f sec, pkt size %d bytes\n", targetHost, ss.get_elapsed_open(), ss.get_packet_size());
+	printf("Main:\tconnected to %s in %.3f sec, pkt size %d bytes\n", targetHost, ss.get_elapsed_connect(), ss.get_packet_size());
 
 	/////////////////////////////// send ///////////////////////////////
 	/*
@@ -69,7 +69,7 @@ void transfer(char* argv[]) {
 		printf("Main:\t connect failed with status %d\n", status);
 		exit(-1);
 	}
-	printf("Main:\ttransfer finished in %.3f sec\n", ss.get_elapsed_close());
+	printf("Main:\ttransfer finished in %.3f sec\n", ss.get_elapsed_finish());
 	
 }
 
