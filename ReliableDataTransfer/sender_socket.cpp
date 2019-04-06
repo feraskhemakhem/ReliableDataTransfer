@@ -7,9 +7,38 @@
 #include "sender_socket.h"
 #include "stdafx.h"
 
- /******************** OPEN ********************/
+//////////////////// stat thread function //////////////////////////
+UINT statThread(LPVOID pParam)
+{
+	StatData* stat = (StatData*)pParam;
+	clock_t time = clock();
+	while (WaitForSingleObject(stat->isDone, 2000) == WAIT_TIMEOUT) {
+		stat->time = (clock() - time) / 1000;
+		printf("%d\n", stat->next_seq);
+	}
+	return 0;
+}
+
+/******************** CONSTRUCTOR ********************/
+SenderSocket::SenderSocket() {
+	// itializations
+	start_time = clock(); 
+	seq_number = 0; 
+	sock = INVALID_SOCKET; 
+	elapsed_time = 0.0;
+	this->s = new StatData();
+
+	// start stat thread
+	this->s->isDone = CreateEventA(NULL, true, false, NULL);
+	this->stat = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)statThread, s, 0, NULL);
+
+}
+
+/******************** OPEN ********************/
 int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperties* link_prop) {
+
 	double beginRTT, endRTT;
+
 	if (sock != INVALID_SOCKET) {
 		// if sock value is already set then Open is already called
 		return ALREADY_CONNECTED;
@@ -109,15 +138,21 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 
 /******************** SEND ********************/
 int SenderSocket::Send(char* charBuf, int bytes) {
+
 	// if socket not open... aka if send called without open
 	if (sock == INVALID_SOCKET) {
 		return NOT_CONNECTED;
 	}
+
+
+
+	RTO = estRTT + 4 * max(devRTT, 0.010);
 	return STATUS_OK; // implement error checking for part 5
 }
 
 /******************** CLOSE ********************/
 int SenderSocket::Close() {
+
 	double beginRTT, endRTT;
 	if (sock == INVALID_SOCKET) {
 		// sock set in Open
@@ -190,12 +225,17 @@ int SenderSocket::Close() {
 	this->RTO = (this->link_prop->RTT) * 3.0; // RTO = RTT * 3
 	printf("[%.3f] <-- FIN-ACK %d window %d\n", endRTT, rh->ackSeq, rh->recvWnd);
 
+	// sets the stat thread to complete so that it knows it is done printing
+	SetEvent(this->s->isDone); // trigger waitforoneobject
+	CloseHandle(stat); // join
+
 	// close socket to end communication... if already closed or not open, error will yield
 	if (closesocket(sock) == SOCKET_ERROR) {
 		// should not even get here
 		printf("[%.3f] --> failed to close socket with %d\n", (clock() - start_time) / 1000.0, WSAGetLastError()); // check if this is how they want it
 		return NOT_CONNECTED;
 	}
+	sock = INVALID_SOCKET;
 	return STATUS_OK; // implement error checking for part 5
 }
 

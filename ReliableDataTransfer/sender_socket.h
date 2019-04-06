@@ -21,15 +21,22 @@ class SenderSocket {
 	int seq_number;
 	LinkProperties* link_prop;
 
+	// part 2
+	double estRTT, devRTT; // RTO calculations
+	HANDLE stat; // stat thread
+	// variables connected to stat thread
+	StatData* s; // pointer so that it can be changed in other functinos
 
 	// testing
 	char* targetHost;
 	int port;
 public:
-	SenderSocket() { start_time = clock(); seq_number = 0; sock = INVALID_SOCKET; elapsed_time = 0.0; } // start timer
+	SenderSocket(); // start timer, stat thread, etc
 	int Open(char* targetHost, int port, int window_size, LinkProperties* lp); // targetHost, MAGIC_PORT, senderWindow, &lp
 	int Send(char* charBuf, int bytes); // charBuf + off, bytes
 	int Close();
 	double get_elapsed_time() { return elapsed_time; }
+	double get_estRTT() { return estRTT; }
 	int get_packet_size() { return packet_size; }
+	~SenderSocket() { delete s; }
 };

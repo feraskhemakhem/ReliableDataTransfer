@@ -47,10 +47,11 @@ void transfer(char* argv[]) {
 	printf("Main:\tconnected to %s in %.3f sec, pkt size %d bytes\n", targetHost, ss.get_elapsed_time(), ss.get_packet_size());
 
 	/////////////////////////////// send ///////////////////////////////
-	/*
+
 	char *charBuf = (char*)dwordBuf; // this buffer goes into socket
 	UINT64 byteBufferSize = dwordBufSize << 2; // convert to bytes
 	UINT64 off = 0; // current position in buffer
+	buffer_timer = clock();
 	while (off < byteBufferSize)
 	{
 		// decide the size of next chunk
@@ -62,7 +63,9 @@ void transfer(char* argv[]) {
 		}
 		off += bytes;
 	}
-	*/
+
+	double elapsed_time = (clock() - buffer_timer) / 1000.0; // elapsed time from first send to last ACK non-FIN
+
 	/////////////////////////////// close ///////////////////////////////
 
 	if ((status = ss.Close()) != STATUS_OK) {
@@ -70,8 +73,9 @@ void transfer(char* argv[]) {
 		printf("Main:\t connect failed with status %d\n", status);
 		exit(-1);
 	}
-	printf("Main:\ttransfer finished in %.3f sec\n", ss.get_elapsed_time()); // elapsed time is between first non-SYN sent and last non-FIN ACK
-	
+	printf("Main:\ttransfer finished in %.3f sec\n", elapsed_time); // elapsed time is between first non-SYN sent and last non-FIN ACK
+	printf("Main:\testRTT %.3f, ideal rate %.2f\n", ss.get_estRTT(), 420.69);
+		
 }
 
 int main(int argc, char* argv[])

@@ -20,7 +20,7 @@ struct Flags {
 	DWORD ACK : 1;
 	DWORD FIN : 1;
 	DWORD magic : 24;
-	Flags() { memset(this, 0, sizeof(*this)); magic = MAGIC_PROTOCOL; reserved = 0; }
+	Flags() { memset(this, 0, sizeof(*this)); magic = MAGIC_PROTOCOL; }
 	Flags(DWORD s, DWORD a, DWORD f) { memset(this, 0, sizeof(*this)); magic = MAGIC_PROTOCOL; reserved = 0; SYN = s; ACK = a; FIN = f; }
 };
 
@@ -50,3 +50,22 @@ struct ReceiverHeader {
 };
 
 #pragma pack(pop)
+
+struct StatData {
+	double time; // local to the thread function
+
+	int sender_wind_base; // base of the sender window
+	double data_ACKed; // MB of data acked by receiver
+	int next_seq; // next expected seq# (should be sender_wind_base + 1)
+	int timeout_counter;
+	int fast_retrans_counter;
+	int sender_wind_size;
+	int receiver_wind_size;
+	double goodput; // Mbps speed of app consuming data at receiver [(new - old) * 8 * (MAX_PKT_SIZE - sizeof(SenderDataHeader)]
+	double RTT;
+	HANDLE isDone;
+	void get_new_goodput(double new_goodput) {
+		this->goodput = (new_goodput - this->goodput) * 8 * (MAX_PKT_SIZE - sizeof(SenderDataHeader));
+	}
+	StatData() { memset(this, 0, sizeof(*this)); } // itialize all variables to 0
+};
