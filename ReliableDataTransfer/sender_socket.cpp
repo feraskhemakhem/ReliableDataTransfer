@@ -153,6 +153,7 @@ int SenderSocket::Send(char* charBuf, int bytes) {
 	}
 
 	// send request
+	// test
 
 	// receive info
 
