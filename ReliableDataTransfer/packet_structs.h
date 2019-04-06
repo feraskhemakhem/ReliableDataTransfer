@@ -56,16 +56,19 @@ struct StatData {
 
 	int sender_wind_base; // base of the sender window
 	double data_ACKed; // MB of data acked by receiver
-	int next_seq; // next expected seq# (should be sender_wind_base + 1)
-	int timeout_counter;
-	int fast_retrans_counter;
-	int sender_wind_size;
-	int receiver_wind_size;
+	int next_seq; // next expected seq # --> ReceiverHeader
+	int timeout_counter; // every timeout
+	int fast_retrans_counter; //
+	DWORD sender_wind_size; // --> ss.Open parameter
+	DWORD receiver_wind_size;  // --> ReceiverHeader
 	double goodput; // Mbps speed of app consuming data at receiver [(new - old) * 8 * (MAX_PKT_SIZE - sizeof(SenderDataHeader)]
-	double RTT;
-	HANDLE isDone;
+	double RTT; // estRTT --> all functions
+	HANDLE isDone; // --> ss.Close
 	void get_new_goodput(double new_goodput) {
 		this->goodput = (new_goodput - this->goodput) * 8 * (MAX_PKT_SIZE - sizeof(SenderDataHeader));
+	}
+	DWORD get_effective_win_size() { // effective window is min(sender_wind_size, receiver_wind_size);
+		return min(sender_wind_size, receiver_wind_size);
 	}
 	StatData() { memset(this, 0, sizeof(*this)); } // itialize all variables to 0
 };

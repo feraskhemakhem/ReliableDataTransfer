@@ -22,10 +22,12 @@ class SenderSocket {
 	LinkProperties* link_prop;
 
 	// part 2
-	double estRTT, devRTT; // RTO calculations
+	double devRTT; // RTO calculations
 	HANDLE stat; // stat thread
 	// variables connected to stat thread
-	StatData* s; // pointer so that it can be changed in other functinos
+	StatData* s; // pointer so that it can be changed in other functions
+	void update_receiver_info(ReceiverHeader* rh);
+	void calculate_RTO(double sample_RTT);
 
 	// testing
 	char* targetHost;
@@ -36,7 +38,7 @@ public:
 	int Send(char* charBuf, int bytes); // charBuf + off, bytes
 	int Close();
 	double get_elapsed_time() { return elapsed_time; }
-	double get_estRTT() { return estRTT; }
+	double get_estRTT() { return this->s->RTT; }
 	int get_packet_size() { return packet_size; }
 	~SenderSocket() { delete s; }
 };

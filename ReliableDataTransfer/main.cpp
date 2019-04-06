@@ -59,7 +59,8 @@ void transfer(char* argv[]) {
 		// send chunk into socket
 		if ((status = ss.Send(charBuf + off, bytes)) != STATUS_OK) {
 			// error handling: print status and quit
-			printf("Main:\t connect failed with status %d", status);
+			printf("Main:\t connect failed with status %d\n", status);
+			exit(-1);
 		}
 		off += bytes;
 	}

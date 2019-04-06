@@ -27,6 +27,7 @@ SenderSocket::SenderSocket() {
 	sock = INVALID_SOCKET; 
 	elapsed_time = 0.0;
 	this->s = new StatData();
+	devRTT = 0;
 
 	// start stat thread
 	this->s->isDone = CreateEventA(NULL, true, false, NULL);
@@ -38,6 +39,8 @@ SenderSocket::SenderSocket() {
 int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperties* link_prop) {
 
 	double beginRTT, endRTT;
+	this->s->sender_wind_size = window_size;
+	this->s->RTT = link_prop->RTT;
 
 	if (sock != INVALID_SOCKET) {
 		// if sock value is already set then Open is already called
@@ -129,9 +132,14 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 		return FAILED_RECV;
 	}
 	ReceiverHeader *rh = (ReceiverHeader*)ans;
+	// update stat thread with receiver info
+	update_receiver_info(rh);
+
 	endRTT = (clock() - this->start_time) / 1000.0;
-	this->link_prop->RTT = elapsed_time = endRTT - beginRTT; // updating to get elapsed time for print after function is complete, in the main
-	this->RTO = (this->link_prop->RTT) * 3.0; // RTO = RTT * 3
+	this->s->RTT = elapsed_time = endRTT - beginRTT; // updating to get elapsed time for print after function is complete, in the main
+	// this->RTO = (elapsed_time) * 3.0; // RTO = RTT * 3
+
+	calculate_RTO(elapsed_time);
 
 	return STATUS_OK; // implement error checking for part 5
 }
@@ -144,9 +152,17 @@ int SenderSocket::Send(char* charBuf, int bytes) {
 		return NOT_CONNECTED;
 	}
 
+	// send request
 
+	// receive info
 
-	RTO = estRTT + 4 * max(devRTT, 0.010);
+	// update receiver info
+
+	// update stat thread with receiver info
+	// update_receiver_info((ReceiverHeader*)ans);
+
+	// update RTO 
+
 	return STATUS_OK; // implement error checking for part 5
 }
 
@@ -221,8 +237,8 @@ int SenderSocket::Close() {
 	}
 	ReceiverHeader *rh = (ReceiverHeader*)ans;
 	endRTT = (clock() - this->start_time) / 1000.0;
-	this->link_prop->RTT = endRTT - beginRTT;
-	this->RTO = (this->link_prop->RTT) * 3.0; // RTO = RTT * 3
+	calculate_RTO(endRTT - beginRTT);
+
 	printf("[%.3f] <-- FIN-ACK %d window %d\n", endRTT, rh->ackSeq, rh->recvWnd);
 
 	// sets the stat thread to complete so that it knows it is done printing
@@ -277,4 +293,17 @@ int SenderSocket::initialize_sockaddr(struct sockaddr_in& server, char* host, in
 		server.sin_addr.s_addr = INADDR_ANY;			// allows me to receive packets on all physics interfaces of the system
 
 	return STATUS_OK;
+}
+
+void SenderSocket::update_receiver_info(ReceiverHeader* rh) {
+	this->s->receiver_wind_size = rh->recvWnd;
+	this->s->get_effective_win_size();
+	this->s->next_seq = rh->ackSeq;
+}
+
+void SenderSocket::calculate_RTO(double sample_RTT) {
+	double alpha = 0.125, beta = 0.25;
+	this->s->RTT = (1 - alpha) * this->s->RTT + alpha * sample_RTT;
+	devRTT = (1 - beta) * devRTT + beta * fabs(sample_RTT - this->s->RTT);
+	RTO = this->s->RTT + 4 * max(devRTT, 0.010);
 }

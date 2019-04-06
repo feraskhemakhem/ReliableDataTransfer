@@ -20,6 +20,7 @@
 
 #include <string>
 #include <vector>
+#include <math.h> // fabs
 #include <algorithm> // min, max
 #include <time.h>
 #include <sys\timeb.h> 
