@@ -21,6 +21,9 @@
     <ClCompile Include="sender_socket.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="checksum.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h">
@@ -30,6 +33,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="packet_structs.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="checksum.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

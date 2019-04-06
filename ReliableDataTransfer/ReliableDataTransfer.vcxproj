@@ -125,8 +125,10 @@
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="sender_socket.cpp" />
+    <ClCompile Include="checksum.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="checksum.h" />
     <ClInclude Include="packet_structs.h" />
     <ClInclude Include="sender_socket.h" />
     <ClInclude Include="stdafx.h" />

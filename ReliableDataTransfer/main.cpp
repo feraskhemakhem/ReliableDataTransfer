@@ -6,6 +6,7 @@
 
 #include "stdafx.h"
 #include "sender_socket.h"
+#include "checksum.h"
 
 void transfer(char* argv[]) {
 
@@ -43,7 +44,7 @@ void transfer(char* argv[]) {
 		exit(-1);
 	}
 
-	printf("Main:\tconnected to %s in %.3f sec, pkt size %d bytes\n", targetHost, ss.get_elapsed_connect(), ss.get_packet_size());
+	printf("Main:\tconnected to %s in %.3f sec, pkt size %d bytes\n", targetHost, ss.get_elapsed_time(), ss.get_packet_size());
 
 	/////////////////////////////// send ///////////////////////////////
 	/*
@@ -69,7 +70,7 @@ void transfer(char* argv[]) {
 		printf("Main:\t connect failed with status %d\n", status);
 		exit(-1);
 	}
-	printf("Main:\ttransfer finished in %.3f sec\n", ss.get_elapsed_finish());
+	printf("Main:\ttransfer finished in %.3f sec\n", ss.get_elapsed_time()); // elapsed time is between first non-SYN sent and last non-FIN ACK
 	
 }
 

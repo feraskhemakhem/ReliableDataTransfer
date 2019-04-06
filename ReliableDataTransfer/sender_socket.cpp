@@ -7,43 +7,9 @@
 #include "sender_socket.h"
 #include "stdafx.h"
 
-int SenderSocket::initialize_sockaddr(struct sockaddr_in& server, char* host, int port) {
-
-	// structure used in DNS lookups
-	struct hostent *remote;
-
-	// structure for connecting to server
-	memset(&server, 0, sizeof(server));
-	server.sin_family = AF_INET;					// sets the family to IPv4
-	server.sin_port = htons(port);					// provides the port 0 to bind to... 
-
-	if (host != NULL) {
-		DWORD IP;
-		// inet_pton(AF_INET, targetHost, &IP);
-		IP = inet_addr(host);
-		if (IP == INADDR_NONE) { //not an IP
-			// if not a valid IP, then do a DNS lookup
-			if ((remote = gethostbyname(host)) == NULL)
-			{
-				printf("[%.3f] --> target %s is invalid\n", (clock() - start_time) / 1000.0, host);
-				return INVALID_NAME;
-			}
-			else { // take the first IP address and copy into sin_addr 
-				memcpy((char *)&(server.sin_addr), remote->h_addr, remote->h_length);
-				IP = server.sin_addr.S_un.S_addr;
-			}
-		}
-		else {
-			server.sin_addr.S_un.S_addr = IP;
-		}
-	}
-	else
-		server.sin_addr.s_addr = INADDR_ANY;			// allows me to receive packets on all physics interfaces of the system
-
-	return STATUS_OK;
-}
-
+ /******************** OPEN ********************/
 int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperties* link_prop) {
+	double beginRTT, endRTT;
 	if (sock != INVALID_SOCKET) {
 		// if sock value is already set then Open is already called
 		return ALREADY_CONNECTED;
@@ -61,7 +27,7 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	this->link_prop = link_prop;
 	struct sockaddr_in local;
 	initialize_sockaddr(local);
-	this->RTT = link_prop->RTT;
+	this->RTO = max(1.0, 2 * link_prop->RTT);
 
 	if (bind(sock, (struct sockaddr*)&local, sizeof(local)) == SOCKET_ERROR) { // let the OS select next available port for me
 		// handle errors
@@ -100,8 +66,8 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 			return FAILED_SEND;
 		}
 
-		elapsed_connect = (clock() - this->start_time) / 1000.0; // elapsed open is used for elapsed time if SYN and SYN-ACK work
-		printf("[%.3f] --> SYN %d (attempt %d of %d, RTO %.3f) to %s\n", this->RTT, seq_number, i, 3, this->RTO, inet_ntoa(request.sin_addr));
+		beginRTT = (clock() - this->start_time) / 1000.0; // elapsed open is used for elapsed time if SYN and SYN-ACK work
+		// printf("[%.3f] --> SYN %d (attempt %d of %d, RTO %.3f) to %s\n", this->link_prop->RTT, seq_number, i, 3, this->RTO, inet_ntoa(request.sin_addr));
 
 		// return of the handshake
 
@@ -134,17 +100,14 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 		return FAILED_RECV;
 	}
 	ReceiverHeader *rh = (ReceiverHeader*)ans;
-	double elapsed_synack = (clock() - this->start_time) / 1000.0;
-	this->RTT = elapsed_synack - elapsed_connect; // updating to get elapsed time for print after function is complete, in the main
-	elapsed_connect = elapsed_synack - elapsed_connect;
-	//this->link_prop->RTT = this->RTT;
-	this->RTO = (elapsed_synack) * 3.0; // RTO = RTT * 3
-	printf("[%.3f] <-- SYN-ACK %d window %d; setting initial RTO to %.3f\n", elapsed_synack, rh->ackSeq, rh->recvWnd, this->RTO);
+	endRTT = (clock() - this->start_time) / 1000.0;
+	this->link_prop->RTT = elapsed_time = endRTT - beginRTT; // updating to get elapsed time for print after function is complete, in the main
+	this->RTO = (this->link_prop->RTT) * 3.0; // RTO = RTT * 3
 
-	elapsed_finish = elapsed_synack;
 	return STATUS_OK; // implement error checking for part 5
 }
 
+/******************** SEND ********************/
 int SenderSocket::Send(char* charBuf, int bytes) {
 	// if socket not open... aka if send called without open
 	if (sock == INVALID_SOCKET) {
@@ -153,7 +116,9 @@ int SenderSocket::Send(char* charBuf, int bytes) {
 	return STATUS_OK; // implement error checking for part 5
 }
 
+/******************** CLOSE ********************/
 int SenderSocket::Close() {
+	double beginRTT, endRTT;
 	if (sock == INVALID_SOCKET) {
 		// sock set in Open
 		return NOT_CONNECTED;
@@ -186,11 +151,8 @@ int SenderSocket::Close() {
 			return FAILED_SEND;
 		}
 
-		double elapsed_send = (clock() - this->start_time) / 1000.0; // elapsed open is used for elapsed time if SYN and SYN-ACK work
-		printf("[%.3f] --> FIN %d (attempt %d of %d, RTO %.3f)\n", elapsed_send, this->seq_number, i, 5, this->RTO);
-
-		if (i == 1)
-			elapsed_finish = elapsed_send - elapsed_finish;
+		beginRTT = (clock() - this->start_time) / 1000.0; // elapsed open is used for elapsed time if SYN and SYN-ACK work
+		// printf("[%.3f] --> FIN %d (attempt %d of %d, RTO %.3f)\n", beginRTT, this->seq_number, i, 5, this->RTO);
 
 		// return of the handshake
 
@@ -223,9 +185,10 @@ int SenderSocket::Close() {
 		return FAILED_RECV;
 	}
 	ReceiverHeader *rh = (ReceiverHeader*)ans;
-	double elapsed_synack = (clock() - this->start_time) / 1000.0;
-	this->RTO = (elapsed_synack) * 3.0; // RTO = RTT * 3
-	printf("[%.3f] <-- FIN-ACK %d window %d\n", elapsed_synack, rh->ackSeq, rh->recvWnd);
+	endRTT = (clock() - this->start_time) / 1000.0;
+	this->link_prop->RTT = endRTT - beginRTT;
+	this->RTO = (this->link_prop->RTT) * 3.0; // RTO = RTT * 3
+	printf("[%.3f] <-- FIN-ACK %d window %d\n", endRTT, rh->ackSeq, rh->recvWnd);
 
 	// close socket to end communication... if already closed or not open, error will yield
 	if (closesocket(sock) == SOCKET_ERROR) {
@@ -234,4 +197,44 @@ int SenderSocket::Close() {
 		return NOT_CONNECTED;
 	}
 	return STATUS_OK; // implement error checking for part 5
+}
+
+
+
+
+////////////////////////////////// H E L P E R   F U N C T I O N S //////////////////////////////////
+int SenderSocket::initialize_sockaddr(struct sockaddr_in& server, char* host, int port) {
+
+	// structure used in DNS lookups
+	struct hostent *remote;
+
+	// structure for connecting to server
+	memset(&server, 0, sizeof(server));
+	server.sin_family = AF_INET;					// sets the family to IPv4
+	server.sin_port = htons(port);					// provides the port 0 to bind to... 
+
+	if (host != NULL) {
+		DWORD IP;
+		// inet_pton(AF_INET, targetHost, &IP);
+		IP = inet_addr(host);
+		if (IP == INADDR_NONE) { //not an IP
+			// if not a valid IP, then do a DNS lookup
+			if ((remote = gethostbyname(host)) == NULL)
+			{
+				printf("[%.3f] --> target %s is invalid\n", (clock() - start_time) / 1000.0, host);
+				return INVALID_NAME;
+			}
+			else { // take the first IP address and copy into sin_addr 
+				memcpy((char *)&(server.sin_addr), remote->h_addr, remote->h_length);
+				IP = server.sin_addr.S_un.S_addr;
+			}
+		}
+		else {
+			server.sin_addr.S_un.S_addr = IP;
+		}
+	}
+	else
+		server.sin_addr.s_addr = INADDR_ANY;			// allows me to receive packets on all physics interfaces of the system
+
+	return STATUS_OK;
 }
