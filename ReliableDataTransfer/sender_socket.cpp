@@ -8,12 +8,20 @@
 #include "stdafx.h"
 
 //////////////////// stat thread function //////////////////////////
+UINT workerThread(LPVOID pParam)
+{
+	while (true) {
+		// 
+	}
+	return 0;
+}
+
+//////////////////// stat thread function //////////////////////////
 UINT statThread(LPVOID pParam)
 {
 	StatData* stat = (StatData*)pParam;
-	clock_t time = clock();
 	while (WaitForSingleObject(stat->isDone, 2000) == WAIT_TIMEOUT) {
-		stat->time = (clock() - time) / 1000;
+		double time = (clock() - stat->start_time) / 1000;
 		printf("%d\n", stat->next_seq);
 	}
 	return 0;
@@ -27,12 +35,23 @@ SenderSocket::SenderSocket() {
 	sock = INVALID_SOCKET; 
 	elapsed_time = 0.0;
 	this->s = new StatData();
-	devRTT = 0;
-
-	// start stat thread
+	this->s->start_time = start_time;
 	this->s->isDone = CreateEventA(NULL, true, false, NULL);
-	this->stat = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)statThread, s, 0, NULL);
 
+	devRTT = 0;
+}
+
+/******************** DESTRUCTOR ********************/
+SenderSocket::~SenderSocket() {
+	if (WaitForSingleObject(this->stat, 0) != WAIT_OBJECT_0) { // if stat thread not terminated
+		// sets the stat thread to complete so that it knows it is done printing
+		SetEvent(this->s->isDone);
+		CloseHandle(stat);
+	}
+	if (WaitForSingleObject(this->worker, 0) != WAIT_OBJECT_0) {
+		CloseHandle(worker);
+	}
+	delete s;
 }
 
 /******************** OPEN ********************/
@@ -131,15 +150,20 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 		printf("[%.3f] <-- failed recvfrom with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
 		return FAILED_RECV;
 	}
-	ReceiverHeader *rh = (ReceiverHeader*)ans;
-	// update stat thread with receiver info
-	update_receiver_info(rh);
 
+	// update stat thread with receiver info
+	update_receiver_info((ReceiverHeader*)ans);
+
+	// RTO calculation
 	endRTT = (clock() - this->start_time) / 1000.0;
 	this->s->RTT = elapsed_time = endRTT - beginRTT; // updating to get elapsed time for print after function is complete, in the main
-	// this->RTO = (elapsed_time) * 3.0; // RTO = RTT * 3
-
 	calculate_RTO(elapsed_time);
+
+	// start stat thread
+	this->stat = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)statThread, s, 0, NULL);
+	this->worker = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)workerThread, s, 0, NULL);
+	// start worker thread
+
 
 	return STATUS_OK; // implement error checking for part 5
 }
@@ -153,7 +177,6 @@ int SenderSocket::Send(char* charBuf, int bytes) {
 	}
 
 	// send request
-	// test
 
 	// receive info
 
