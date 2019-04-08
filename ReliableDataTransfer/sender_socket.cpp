@@ -7,53 +7,8 @@
 #include "sender_socket.h"
 #include "stdafx.h"
 
-//////////////////// stat thread function //////////////////////////
-UINT SenderSocket::workerThread(LPVOID pParam)
-{
-	HANDLE events[] = { socketReceiveReady, full };
-	while (true)
-	{
-		DWORD timeout;
-		// set timeout
-	//	if (pending packets)
-	//		timeout = timerExpire - cur_time;
-	//	else
-	//		timeout = INFINITE;
-
-		// wait to see if times out or not
-		int ret = WaitForMultipleObjects(2, events, false, timeout);
-		switch (ret)
-		{
-		// if break occurs, retransmit buffer here
-		case timeout: retx buf[senderBase % W];
-			break;
-		// packet is ready in the socket - get the ACK
-		case socket: receiveACK(); // move senderBase; fast retx
-			break;
-		// packet is ready in the sender - send the packet
-		case sender: sendto(buf[nextToSend % W]);
-			nextToSend++;
-			break;
-		// 
-		default: handle failed wait;
-		}
-		if (first packet of window || just did a retx(timeout / 3 - dup ACK)
-			|| senderBase moved forward)
-			recompute timerExpire;
-			
-	}
-}
-
-//////////////////// stat thread function //////////////////////////
-UINT statThread(LPVOID pParam)
-{
-	StatData* stat = (StatData*)pParam;
-	while (WaitForSingleObject(stat->isDone, 2000) == WAIT_TIMEOUT) {
-		double time = (clock() - stat->start_time) / 1000;
-		printf("%d\n", stat->next_seq);
-	}
-	return 0;
-}
+// declaring for later defining
+DWORD WINAPI statThread(LPVOID pParam);
 
 /******************** CONSTRUCTOR ********************/
 SenderSocket::SenderSocket() {
@@ -66,8 +21,9 @@ SenderSocket::SenderSocket() {
 	this->s = new StatData();
 	this->s->start_time = start_time;
 	this->s->isDone = CreateEventA(NULL, true, false, NULL);
-	this->eventQuit = this->full = CreateEventA(NULL, true, false, NULL);
-	this->empty = this->socketReceiveReady = CreateEventA(NULL, true, true, NULL);
+	this->eventQuit = CreateEventA(NULL, true, false, NULL); // TODO: declutter isDone and this into one
+	this->s->isDone = this->eventQuit;
+	this->socketReceiveReady = CreateEventA(NULL, true, true, NULL);
 
 	devRTT = 0;
 }
@@ -91,6 +47,11 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	double beginRTT, endRTT;
 	this->s->sender_wind_size = window_size;
 	this->s->RTT = link_prop->RTT;
+
+	// initalize sempahore handles
+	this->full = CreateSemaphore(NULL, window_size, window_size, NULL);
+	this->empty = CreateSemaphore(NULL, 0, window_size, NULL);
+
 
 	if (sock != INVALID_SOCKET) {
 		// if sock value is already set then Open is already called
@@ -183,7 +144,8 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	}
 
 	// update stat thread with receiver info
-	update_receiver_info((ReceiverHeader*)ans);
+	ReceiverHeader *rh = (ReceiverHeader*)ans;
+	update_receiver_info(rh);
 
 	// RTO calculation
 	endRTT = (clock() - this->start_time) / 1000.0;
@@ -191,10 +153,30 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	calculate_RTO(elapsed_time);
 
 	// start stat thread
-	this->stat = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)statThread, s, 0, NULL);
-	this->worker = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)workerThread, s, 0, NULL);
+	this->stat = CreateThread(NULL, 0, statThread, s, 0, NULL);
 	// start worker thread
+	this->worker = CreateThread(NULL, 0, workerThread, NULL, 0, NULL);
+	
+	/*
+	// flow control - TODO: implement for PT 3
+	int lastReleased = min(window_size, rh->recvWnd);
+	ReleaseSemaphore(empty, lastReleased, NULL);
+	// in the worker thread
+	while (not end of transfer)
+	{
+		get ACK with sequence y, receiver window R
+			if (y > sndBase)
+			{
+				sndBase = y
+					effectiveWin = min(W, ack->window)
 
+					// how much we can advance the semaphore
+					newReleased = sndBase + effectiveWin - lastReleased
+					ReleaseSemaphore(empty, newReleased)
+					lastReleased += newReleased
+			}
+	}
+	*/
 
 	return STATUS_OK; // implement error checking for part 5
 }
@@ -218,7 +200,7 @@ int SenderSocket::Send(char* charBuf, int bytes) {
 	// ... // set up remaining fields in sdh and p
 	// memcpy(sdh + 1, charBuf, bytes);
 	next_seq++;
-	//ReleaseSemaphore(full, 1);
+	ReleaseSemaphore(full, 1, NULL);
 	// end of code provided
 	
 	// send request
@@ -316,6 +298,9 @@ int SenderSocket::Close() {
 
 	// semaphore closed
 	SetEvent(this->eventQuit);
+	SetEvent(this->full);
+	SetEvent(this->empty);
+	SetEvent(this->socketReceiveReady); // NECESSARY (?)
 
 
 	// close socket to end communication... if already closed or not open, error will yield
@@ -379,4 +364,58 @@ void SenderSocket::calculate_RTO(double sample_RTT) {
 	this->s->RTT = (1 - alpha) * this->s->RTT + alpha * sample_RTT;
 	devRTT = (1 - beta) * devRTT + beta * fabs(sample_RTT - this->s->RTT);
 	RTO = this->s->RTT + 4 * max(devRTT, 0.010);
+}
+
+//////////////////// worker thread function //////////////////////////
+DWORD WINAPI SenderSocket::workerThread(LPVOID pParam)
+{
+	int nextToSend = 0;
+	DWORD timeout;
+	HANDLE events[] = { socketReceiveReady, full };
+	while (true)
+	{
+		// set timeout
+		if (pending packets)
+			timeout = timer_expire - clock();
+		else
+			timeout = INFINITE;
+
+		// wait to see if times out or not
+		int ret = WaitForMultipleObjects(2, events, false, timeout);
+		// ret == array index of the object that satisfied the wait
+		switch (ret)
+		{
+			// if break occurs, retransmit buffer here
+		case WAIT_TIMEOUT: retx buf[this->s->sender_wind_base % this->s->sender_wind_size];
+			break;
+			// packet is ready in the socket - get the ACK (socketReceiveReady)
+		case 0-WAIT_OBJECT_0: receiveACK(); // move senderBase; fast retx
+			break;
+			// packet is ready in the sender - send the packet (full)
+		case 1-WAIT_OBJECT_0: sendto(buf[nextSeq % this->s->sender_wind_size]);
+			nextSeq++;
+			break;
+			// 
+		default:// errored out - WAIT_FAILED D:
+			printf("[%.3f] --> WaitForMultipleObjects failed in worker thread.\nExiting...\n", clock() - start_time);
+			exit(-1);
+		}
+		if (first packet of window || just did a retx(timeout / 3 - dup ACK)
+			|| senderBase moved forward)
+			recompute timerExpire;
+
+	}
+	return 0;
+}
+
+
+//////////////////// stat thread function //////////////////////////
+DWORD WINAPI statThread(LPVOID pParam)
+{
+	StatData* stat = (StatData*)pParam;
+	while (WaitForSingleObject(stat->isDone, 2000) == WAIT_TIMEOUT) {
+		double time = (clock() - stat->start_time) / 1000;
+		printf("%d\n", stat->next_seq);
+	}
+	return 0;
 }

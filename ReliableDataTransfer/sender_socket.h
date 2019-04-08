@@ -34,8 +34,10 @@ class SenderSocket {
 	int next_seq;
 
 	// thread functions
-	UINT workerThread(LPVOID pParam);
+	DWORD WINAPI workerThread(LPVOID pParam);
 	void receiveACK();
+	clock_t timer_expire; // time for base packet so be sent // (clock_t)timeout * CLOCKS_PER_SEC
+
 
 	// testing
 	char* targetHost;
