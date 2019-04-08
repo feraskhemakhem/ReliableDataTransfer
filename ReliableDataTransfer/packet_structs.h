@@ -49,10 +49,19 @@ struct ReceiverHeader {
 	DWORD ackSeq; // ack value = next expected sequence
 };
 
+// used for contents of each packet being sent
+struct Packet {
+	int seq; // for easy access in worker thread
+	int type; // SYN, FIN, data
+	int size; // for retx in worker thread
+	clock_t txTime; // transmission time
+	char *buf; // actual packet with header
+};
+
 #pragma pack(pop)
 
 struct StatData {
-	double time; // local to the thread function
+	double start_time; // local to the thread function
 
 	int sender_wind_base; // base of the sender window
 	double data_ACKed; // MB of data acked by receiver
@@ -72,3 +81,4 @@ struct StatData {
 	}
 	StatData() { memset(this, 0, sizeof(*this)); } // itialize all variables to 0
 };
+
