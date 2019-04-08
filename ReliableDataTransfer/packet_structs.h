@@ -52,7 +52,7 @@ struct ReceiverHeader {
 #pragma pack(pop)
 
 struct StatData {
-	double time; // local to the thread function
+	double start_time; // local to the thread function
 
 	int sender_wind_base; // base of the sender window
 	double data_ACKed; // MB of data acked by receiver
@@ -62,6 +62,7 @@ struct StatData {
 	DWORD sender_wind_size; // --> ss.Open parameter
 	DWORD receiver_wind_size;  // --> ReceiverHeader
 	double goodput; // Mbps speed of app consuming data at receiver [(new - old) * 8 * (MAX_PKT_SIZE - sizeof(SenderDataHeader)]
+
 	double RTT; // estRTT --> all functions
 	HANDLE isDone; // --> ss.Close
 	void get_new_goodput(double new_goodput) {
