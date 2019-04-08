@@ -29,6 +29,14 @@ class SenderSocket {
 	void update_receiver_info(ReceiverHeader* rh);
 	void calculate_RTO(double sample_RTT);
 
+	// shared buffer stuff
+	HANDLE eventQuit, empty, full, socketReceiveReady;
+	int next_seq;
+
+	// thread functions
+	UINT workerThread(LPVOID pParam);
+	void receiveACK();
+
 	// testing
 	char* targetHost;
 	int port;

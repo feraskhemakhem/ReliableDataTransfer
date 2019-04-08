@@ -8,12 +8,40 @@
 #include "stdafx.h"
 
 //////////////////// stat thread function //////////////////////////
-UINT workerThread(LPVOID pParam)
+UINT SenderSocket::workerThread(LPVOID pParam)
 {
-	while (true) {
+	HANDLE events[] = { socketReceiveReady, full };
+	while (true)
+	{
+		DWORD timeout;
+		// set timeout
+	//	if (pending packets)
+	//		timeout = timerExpire - cur_time;
+	//	else
+	//		timeout = INFINITE;
+
+		// wait to see if times out or not
+		int ret = WaitForMultipleObjects(2, events, false, timeout);
+		switch (ret)
+		{
+		// if break occurs, retransmit buffer here
+		case timeout: retx buf[senderBase % W];
+			break;
+		// packet is ready in the socket - get the ACK
+		case socket: receiveACK(); // move senderBase; fast retx
+			break;
+		// packet is ready in the sender - send the packet
+		case sender: sendto(buf[nextToSend % W]);
+			nextToSend++;
+			break;
 		// 
+		default: handle failed wait;
+		}
+		if (first packet of window || just did a retx(timeout / 3 - dup ACK)
+			|| senderBase moved forward)
+			recompute timerExpire;
+			
 	}
-	return 0;
 }
 
 //////////////////// stat thread function //////////////////////////
@@ -34,9 +62,12 @@ SenderSocket::SenderSocket() {
 	seq_number = 0; 
 	sock = INVALID_SOCKET; 
 	elapsed_time = 0.0;
+	this->next_seq = 0;
 	this->s = new StatData();
 	this->s->start_time = start_time;
 	this->s->isDone = CreateEventA(NULL, true, false, NULL);
+	this->eventQuit = this->full = CreateEventA(NULL, true, false, NULL);
+	this->empty = this->socketReceiveReady = CreateEventA(NULL, true, true, NULL);
 
 	devRTT = 0;
 }
@@ -175,7 +206,21 @@ int SenderSocket::Send(char* charBuf, int bytes) {
 	if (sock == INVALID_SOCKET) {
 		return NOT_CONNECTED;
 	}
-
+	
+	// code provided
+	HANDLE arr[] = { eventQuit, empty };
+	WaitForMultipleObjects(2, arr, false, INFINITE);
+	// no need for mutex as no shared variables are modified
+	// int slot = this->next_seq % this->s->get_effective_win_size();
+	// Packet *p = pending_pkts + slot; // pointer to packet struct
+	// SenderDataHeader *sdh = (SenderDataHeader*)(p->buf);
+	// packet->seq = this->next_seq;
+	// ... // set up remaining fields in sdh and p
+	// memcpy(sdh + 1, charBuf, bytes);
+	next_seq++;
+	//ReleaseSemaphore(full, 1);
+	// end of code provided
+	
 	// send request
 
 	// receive info
@@ -268,6 +313,10 @@ int SenderSocket::Close() {
 	// sets the stat thread to complete so that it knows it is done printing
 	SetEvent(this->s->isDone); // trigger waitforoneobject
 	CloseHandle(stat); // join
+
+	// semaphore closed
+	SetEvent(this->eventQuit);
+
 
 	// close socket to end communication... if already closed or not open, error will yield
 	if (closesocket(sock) == SOCKET_ERROR) {
