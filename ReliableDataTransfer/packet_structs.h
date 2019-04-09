@@ -61,24 +61,25 @@ struct Packet {
 #pragma pack(pop)
 
 struct StatData {
-	double start_time; // local to the thread function
+	clock_t start_time; // local to the thread function
 
 	int sender_wind_base; // base of the sender window
 	double data_ACKed; // MB of data acked by receiver
 	int next_seq; // next expected seq # --> ReceiverHeader
 	int timeout_counter; // every timeout
-	int fast_retrans_counter; //
+	int fast_retx_counter; //
 	DWORD sender_wind_size; // --> ss.Open parameter
 	DWORD receiver_wind_size;  // --> ReceiverHeader
+	DWORD effective_wind_size; // --> ss.Open at the end
 	double goodput; // Mbps speed of app consuming data at receiver [(new - old) * 8 * (MAX_PKT_SIZE - sizeof(SenderDataHeader)]
 
 	double RTT; // estRTT --> all functions
 	HANDLE isDone; // --> ss.Close
-	void get_new_goodput(double new_goodput) {
+	void set_new_goodput(double new_goodput) {
 		this->goodput = (new_goodput - this->goodput) * 8 * (MAX_PKT_SIZE - sizeof(SenderDataHeader));
 	}
-	DWORD get_effective_win_size() { // effective window is min(sender_wind_size, receiver_wind_size);
-		return min(sender_wind_size, receiver_wind_size);
+	void set_effective_win_size() { // effective window is min(sender_wind_size, receiver_wind_size);
+		effective_wind_size = min(sender_wind_size, receiver_wind_size);
 	}
 	StatData() { memset(this, 0, sizeof(*this)); this->isDone = CreateEventA(NULL, true, false, NULL);} // itialize all variables to 0
 };

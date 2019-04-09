@@ -146,7 +146,7 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 
 	// update stat thread with receiver info
 	ReceiverHeader *rh = (ReceiverHeader*)ans;
-	update_receiver_info(rh);
+	update_receiver_info(rh, packet_size);
 
 	// RTO calculation
 	endRTT = (clock() - this->start_time) / 1000.0;
@@ -180,7 +180,8 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	*/
 	 
 	// post-flow control
-	this->W = this->s->get_effective_win_size();
+	this->s->set_effective_win_size();
+	this->W = this->s->effective_wind_size;
 
 	return STATUS_OK; // implement error checking for part 5
 }
@@ -359,7 +360,7 @@ void SenderSocket::runWorker(void)
 			// retx this->pending_pkts[this->s->sender_wind_base % this->W];
 			break;
 		case 0 - WAIT_OBJECT_0:	// packet is ready in the socket - get the ACK (socketReceiveReady)
-			retx = receiveACK(); // move senderBase; fast retx
+			retx = receive_ACK(); // move senderBase; fast retx
 			break;
 			// packet is ready in the sender - send the packet (full)
 		case 1 - WAIT_OBJECT_0:
@@ -392,7 +393,8 @@ DWORD WINAPI statThread(LPVOID pParam)
 	StatData* stat = (StatData*)pParam;
 	while (WaitForSingleObject(stat->isDone, 2000) == WAIT_TIMEOUT) {
 		double time = (clock() - stat->start_time) / 1000;
-		printf("%d\n", stat->next_seq);
+		printf("[%2d] B %6d ( %3.1f MB) N %6d T %d F %d W %d S %.3f Mbps RTT %.3f\n", clock() - stat->start_time, stat->sender_wind_base, stat->data_ACKed, stat->next_seq,
+			stat->timeout_counter, stat->fast_retx_counter, stat->effective_wind_size, stat->goodput, stat->RTT);
 	}
 	return 0;
 }
@@ -435,9 +437,10 @@ int SenderSocket::initialize_sockaddr(struct sockaddr_in& server, char* host, in
 	return STATUS_OK;
 }
 
-void SenderSocket::update_receiver_info(ReceiverHeader* rh) {
+void SenderSocket::update_receiver_info(ReceiverHeader* rh, int packet_size) {
 	this->s->receiver_wind_size = rh->recvWnd;
 	this->s->next_seq = rh->ackSeq;
+	this->s->data_ACKed += packet_size * 1e-6; // bytes to megabytes
 }
 
 void SenderSocket::calculate_RTO(double sample_RTT) {
@@ -459,4 +462,26 @@ bool SenderSocket::send_packet(int index) { // for Packet type only!
 		exit(-1);
 	}
 	return true;
+}
+
+//////////////////// send packet function //////////////////// 
+bool SenderSocket::receive_ACK() {
+	////////////////////////// get ready to recieve response and check for timeout //////////////////////////
+	
+
+
+	// initializations for receiving
+	char ans[MAX_PKT_SIZE];
+	struct sockaddr_in response;
+	int response_size = sizeof(response);
+
+	// in theory select told us that sock is ready to recvfrom, so no need to reattempt
+	if ((packet_size = recvfrom(sock, ans, MAX_PKT_SIZE, 0, (struct sockaddr*)&response, &response_size)) == SOCKET_ERROR) {
+		printf("[%.3f] <-- failed recvfrom with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
+		return FAILED_RECV;
+	}
+
+	// update stat thread with receiver info
+	ReceiverHeader *rh = (ReceiverHeader*)ans;
+	update_receiver_info(rh, packet_size);
 }
