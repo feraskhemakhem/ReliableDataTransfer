@@ -343,7 +343,7 @@ void SenderSocket::runWorker(void)
 	while (true)
 	{
 		// set timeout
-		if (nextToSend == next_seq) // if worker and sender catch up to each other
+		if (nextToSend != next_seq) // if worker and sender dont catch up to each other // pending packets
 			timeout = this->RTO;
 		else
 			timeout = INFINITE;
