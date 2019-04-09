@@ -13,16 +13,14 @@ DWORD WINAPI statThread(LPVOID pParam);
 /******************** CONSTRUCTOR ********************/
 SenderSocket::SenderSocket() {
 	// itializations
-	start_time = clock(); 
+	this->start_time = clock(); 
 	seq_number = 0; 
 	sock = INVALID_SOCKET; 
 	elapsed_time = 0.0;
-	this->next_seq = 0;
 	this->s = new StatData();
-	this->s->start_time = start_time;
-	this->s->isDone = CreateEventA(NULL, true, false, NULL);
+	this->next_seq = 0;
+	this->s->start_time = this->start_time;
 	this->eventQuit = CreateEventA(NULL, true, false, NULL); // TODO: declutter isDone and this into one
-	this->s->isDone = this->eventQuit;
 	this->socketReceiveReady = CreateEventA(NULL, true, true, NULL);
 
 	devRTT = 0;
@@ -44,13 +42,16 @@ SenderSocket::~SenderSocket() {
 /******************** OPEN ********************/
 int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperties* link_prop) {
 
-	double beginRTT, endRTT;
+	/////////////////////// initializations ///////////////////////
 	this->s->sender_wind_size = window_size;
 	this->s->RTT = link_prop->RTT;
 
-	// initalize sempahore handles
+	// initalize sempahore handles - TODO: MOVE THIS AROUND SO THAT IT USES EFFECTIVE WINDOW SIZE
 	this->full = CreateSemaphore(NULL, window_size, window_size, NULL);
 	this->empty = CreateSemaphore(NULL, 0, window_size, NULL);
+
+	// initialize buffer
+	pending_pkts = new Packet[window_size];
 
 
 	if (sock != INVALID_SOCKET) {
@@ -155,7 +156,7 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	// start stat thread
 	this->stat = CreateThread(NULL, 0, statThread, s, 0, NULL);
 	// start worker thread
-	this->worker = CreateThread(NULL, 0, workerThread, NULL, 0, NULL);
+	this->worker = CreateThread(NULL, 0, workerThread, this, 0, NULL);
 	
 	/*
 	// flow control - TODO: implement for PT 3
@@ -177,9 +178,14 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 			}
 	}
 	*/
+	 
+	// post-flow control
+	this->W = this->s->get_effective_win_size();
 
 	return STATUS_OK; // implement error checking for part 5
 }
+
+
 
 /******************** SEND ********************/
 int SenderSocket::Send(char* charBuf, int bytes) {
@@ -189,38 +195,47 @@ int SenderSocket::Send(char* charBuf, int bytes) {
 		return NOT_CONNECTED;
 	}
 	
-	// code provided
+	////////////////////////// insert packet to semaphore //////////////////////////
 	HANDLE arr[] = { eventQuit, empty };
 	WaitForMultipleObjects(2, arr, false, INFINITE);
+
 	// no need for mutex as no shared variables are modified
-	// int slot = this->next_seq % this->s->get_effective_win_size();
-	// Packet *p = pending_pkts + slot; // pointer to packet struct
-	// SenderDataHeader *sdh = (SenderDataHeader*)(p->buf);
-	// packet->seq = this->next_seq;
-	// ... // set up remaining fields in sdh and p
-	// memcpy(sdh + 1, charBuf, bytes);
-	next_seq++;
-	ReleaseSemaphore(full, 1, NULL);
-	// end of code provided
-	
-	// send request
+	int slot = this->next_seq % this->W;
+	Packet *p = pending_pkts + slot; // pointer to packet struct
+	SenderDataHeader *sdh = (SenderDataHeader*)(p->buf);
 
-	// receive info
+	// set up remaining fields in sdh and p
+	p->seq = this->next_seq;
+	p->type = 2; // data
+	p->size = sizeof(Packet);
+	p->txTime = (clock_t)this->RTO * CLOCKS_PER_SEC; // does this work?
 
-	// update receiver info
+	Flags flags{}; // defaulted to 0's with memset
+	sdh->flags = flags;
+	sdh->seq = this->next_seq;
 
-	// update stat thread with receiver info
+	memcpy(sdh + 1, charBuf, bytes); // copy actual contents after header
+
+	next_seq++; // for next packet
+	ReleaseSemaphore(full, 1, NULL);	
+
+	// send request (by worker thread!)
+
+	// receive info (by worker thread!)
+
+	// update stat thread with receiver info (in receiveACK function!)
+	// update RTO (in receiveACK function!)
 	// update_receiver_info((ReceiverHeader*)ans);
 
-	// update RTO 
 
 	return STATUS_OK; // implement error checking for part 5
 }
 
+
+
 /******************** CLOSE ********************/
 int SenderSocket::Close() {
 
-	double beginRTT, endRTT;
 	if (sock == INVALID_SOCKET) {
 		// sock set in Open
 		return NOT_CONNECTED;
@@ -317,6 +332,73 @@ int SenderSocket::Close() {
 
 
 ////////////////////////////////// H E L P E R   F U N C T I O N S //////////////////////////////////
+
+//////////////////// worker thread functions //////////////////////////
+void SenderSocket::runWorker(void)
+{
+	int nextToSend = 0, old_wind_base = this->s->sender_wind_base;
+	bool retx = false;
+	DWORD timeout;
+	HANDLE events[] = { socketReceiveReady, full };
+	while (true)
+	{
+		// set timeout
+		if (pending packets)
+			timeout = this->RTO;
+		else
+			timeout = INFINITE;
+
+		// wait to see if times out or not
+		int ret = WaitForMultipleObjects(2, events, false, timeout);
+		// ret == array index of the object that satisfied the wait
+		switch (ret)
+		{
+		case WAIT_TIMEOUT:  // if break occurs, retx buffer here
+			this->s->timeout_counter++;
+			retx = true;
+			// retx this->pending_pkts[this->s->sender_wind_base % this->W];
+			break;
+		case 0 - WAIT_OBJECT_0:	// packet is ready in the socket - get the ACK (socketReceiveReady)
+			retx = receiveACK(); // move senderBase; fast retx
+			break;
+			// packet is ready in the sender - send the packet (full)
+		case 1 - WAIT_OBJECT_0:
+			retx = false;
+			send_packet(nextToSend++);
+			break;
+			// 
+		default:// errored out - WAIT_FAILED D:
+			printf("[%.3f] --> WaitForMultipleObjects failed in worker thread.\nExiting...\n", clock() - start_time);
+			exit(-1);
+		}
+		if (nextToSend == this->s->sender_wind_base || retx // first packet of window or just did a retx(timeout / 3 - dup ACK
+			|| this->s->sender_wind_base != old_wind_base) { // senderBase moved forward
+			old_wind_base = this->s->sender_wind_base; // in case the base moved forward
+		}
+	}
+}
+
+DWORD WINAPI workerThread(LPVOID pParam) {
+	SenderSocket *ss = (SenderSocket *)pParam;
+	ss->runWorker();
+	return 0;
+}
+
+
+
+//////////////////// stat thread function //////////////////////////
+DWORD WINAPI statThread(LPVOID pParam)
+{
+	StatData* stat = (StatData*)pParam;
+	while (WaitForSingleObject(stat->isDone, 2000) == WAIT_TIMEOUT) {
+		double time = (clock() - stat->start_time) / 1000;
+		printf("%d\n", stat->next_seq);
+	}
+	return 0;
+}
+
+
+//////////////////// misc functions ////////////////////
 int SenderSocket::initialize_sockaddr(struct sockaddr_in& server, char* host, int port) {
 
 	// structure used in DNS lookups
@@ -355,7 +437,6 @@ int SenderSocket::initialize_sockaddr(struct sockaddr_in& server, char* host, in
 
 void SenderSocket::update_receiver_info(ReceiverHeader* rh) {
 	this->s->receiver_wind_size = rh->recvWnd;
-	this->s->get_effective_win_size();
 	this->s->next_seq = rh->ackSeq;
 }
 
@@ -366,56 +447,16 @@ void SenderSocket::calculate_RTO(double sample_RTT) {
 	RTO = this->s->RTT + 4 * max(devRTT, 0.010);
 }
 
-//////////////////// worker thread function //////////////////////////
-DWORD WINAPI SenderSocket::workerThread(LPVOID pParam)
-{
-	int nextToSend = 0;
-	DWORD timeout;
-	HANDLE events[] = { socketReceiveReady, full };
-	while (true)
-	{
-		// set timeout
-		if (pending packets)
-			timeout = timer_expire - clock();
-		else
-			timeout = INFINITE;
 
-		// wait to see if times out or not
-		int ret = WaitForMultipleObjects(2, events, false, timeout);
-		// ret == array index of the object that satisfied the wait
-		switch (ret)
-		{
-			// if break occurs, retransmit buffer here
-		case WAIT_TIMEOUT: retx buf[this->s->sender_wind_base % this->s->sender_wind_size];
-			break;
-			// packet is ready in the socket - get the ACK (socketReceiveReady)
-		case 0-WAIT_OBJECT_0: receiveACK(); // move senderBase; fast retx
-			break;
-			// packet is ready in the sender - send the packet (full)
-		case 1-WAIT_OBJECT_0: sendto(buf[nextSeq % this->s->sender_wind_size]);
-			nextSeq++;
-			break;
-			// 
-		default:// errored out - WAIT_FAILED D:
-			printf("[%.3f] --> WaitForMultipleObjects failed in worker thread.\nExiting...\n", clock() - start_time);
-			exit(-1);
-		}
-		if (first packet of window || just did a retx(timeout / 3 - dup ACK)
-			|| senderBase moved forward)
-			recompute timerExpire;
 
+//////////////////// send packet function //////////////////// 
+bool SenderSocket::send_packet(int index) { // for Packet type only!
+	struct sockaddr_in req; // can this be shared across all sends?
+	initialize_sockaddr(req, this->targetHost, this->port);
+
+	if (sendto(sock, (char*)&(this->pending_pkts[index % this->s->sender_wind_size]), sizeof(Packet), 0, (struct sockaddr*)&req, sizeof(req)) == SOCKET_ERROR) {
+		printf("Failed in sendto\n");
+		exit(-1);
 	}
-	return 0;
-}
-
-
-//////////////////// stat thread function //////////////////////////
-DWORD WINAPI statThread(LPVOID pParam)
-{
-	StatData* stat = (StatData*)pParam;
-	while (WaitForSingleObject(stat->isDone, 2000) == WAIT_TIMEOUT) {
-		double time = (clock() - stat->start_time) / 1000;
-		printf("%d\n", stat->next_seq);
-	}
-	return 0;
+	return true;
 }

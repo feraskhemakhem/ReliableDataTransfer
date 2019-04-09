@@ -29,19 +29,24 @@ class SenderSocket {
 	void update_receiver_info(ReceiverHeader* rh);
 	void calculate_RTO(double sample_RTT);
 
+	// send function stuff
+	int next_seq;
+	bool send_packet(int index); // for Packet type only!
+
 	// shared buffer stuff
 	HANDLE eventQuit, empty, full, socketReceiveReady;
-	int next_seq;
+	Packet *pending_pkts;
+	int W;
 
 	// thread functions
-	DWORD WINAPI workerThread(LPVOID pParam);
-	void receiveACK();
-	clock_t timer_expire; // time for base packet so be sent // (clock_t)timeout * CLOCKS_PER_SEC
-
+	clock_t timer_expire; // time for base packet so be sent
+	bool receiveACK();
+	clock_t beginRTT, endRTT;
 
 	// testing
 	char* targetHost;
 	int port;
+
 public:
 	SenderSocket(); // start timer, stat thread, etc
 	int Open(char* targetHost, int port, int window_size, LinkProperties* lp); // targetHost, MAGIC_PORT, senderWindow, &lp
@@ -51,4 +56,8 @@ public:
 	double get_estRTT() { return this->s->RTT; }
 	int get_packet_size() { return packet_size; }
 	~SenderSocket();
+
+	// thread functions
+	void runWorker(void);
+
 };

@@ -52,7 +52,7 @@ struct ReceiverHeader {
 // used for contents of each packet being sent
 struct Packet {
 	int seq; // for easy access in worker thread
-	int type; // SYN, FIN, data
+	int type; // SYN = 0, FIN = 1, data = 2
 	int size; // for retx in worker thread
 	clock_t txTime; // transmission time
 	char *buf; // actual packet with header
@@ -80,6 +80,6 @@ struct StatData {
 	DWORD get_effective_win_size() { // effective window is min(sender_wind_size, receiver_wind_size);
 		return min(sender_wind_size, receiver_wind_size);
 	}
-	StatData() { memset(this, 0, sizeof(*this)); } // itialize all variables to 0
+	StatData() { memset(this, 0, sizeof(*this)); this->isDone = CreateEventA(NULL, true, false, NULL);} // itialize all variables to 0
 };
 
