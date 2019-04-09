@@ -14,11 +14,11 @@ DWORD WINAPI statThread(LPVOID pParam);
 SenderSocket::SenderSocket() {
 	// itializations
 	this->start_time = clock(); 
+	this->next_seq = this->nextToSend = 0;
 	seq_number = 0; 
 	sock = INVALID_SOCKET; 
 	elapsed_time = 0.0;
 	this->s = new StatData();
-	this->next_seq = 0;
 	this->s->start_time = this->start_time;
 	this->eventQuit = CreateEventA(NULL, true, false, NULL); // TODO: declutter isDone and this into one
 	this->socketReceiveReady = CreateEventA(NULL, true, true, NULL);
@@ -208,7 +208,7 @@ int SenderSocket::Send(char* charBuf, int bytes) {
 	p->seq = this->next_seq;
 	p->type = 2; // data
 	p->size = sizeof(Packet);
-	p->txTime = (clock_t)this->RTO * CLOCKS_PER_SEC; // does this work?
+	p->txTime = (clock_t)this->s->RTT * CLOCKS_PER_SEC; // does this work?
 
 	Flags flags{}; // defaulted to 0's with memset
 	sdh->flags = flags;
@@ -336,14 +336,14 @@ int SenderSocket::Close() {
 //////////////////// worker thread functions //////////////////////////
 void SenderSocket::runWorker(void)
 {
-	int nextToSend = 0, old_wind_base = this->s->sender_wind_base;
+	int old_wind_base = this->s->sender_wind_base;
 	bool retx = false;
 	DWORD timeout;
 	HANDLE events[] = { socketReceiveReady, full };
 	while (true)
 	{
 		// set timeout
-		if (pending packets)
+		if (nextToSend == next_seq) // if worker and sender catch up to each other
 			timeout = this->RTO;
 		else
 			timeout = INFINITE;

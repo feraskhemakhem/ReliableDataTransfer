@@ -42,6 +42,7 @@ class SenderSocket {
 	clock_t timer_expire; // time for base packet so be sent
 	bool receiveACK();
 	clock_t beginRTT, endRTT;
+	int nextToSend;
 
 	// testing
 	char* targetHost;

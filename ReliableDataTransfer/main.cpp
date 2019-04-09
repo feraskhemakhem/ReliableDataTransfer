@@ -18,6 +18,7 @@ void transfer(char* argv[]) {
 	char *targetHost = argv[1]; // the destination IP/hostname
 	int power = atoi(argv[2]); // power of the number of DWORDS
 	int senderWindow = atoi(argv[3]); // window size
+	Checksum cs{}; // checksum for later!
 
 	printf("Main:\tsender W = %d, RTT %.3f, loss %g / %g, link %d Mbps\n", senderWindow, atof(argv[4]), atof(argv[5]), atof(argv[6]), atoi(argv[7]));
 	printf("Main:\tinitializing DWORD array with 2^%d elements... ", power);
@@ -74,6 +75,8 @@ void transfer(char* argv[]) {
 		printf("Main:\t connect failed with status %d\n", status);
 		exit(-1);
 	}
+
+	DWORD check = cs.CRC32((unsigned char*)charBuf, byteBufferSize);
 	printf("Main:\ttransfer finished in %.3f sec\n", elapsed_time); // elapsed time is between first non-SYN sent and last non-FIN ACK
 	printf("Main:\testRTT %.3f, ideal rate %.2f\n", ss.get_estRTT(), 420.69);
 		
