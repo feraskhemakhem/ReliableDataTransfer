@@ -26,7 +26,7 @@ class SenderSocket {
 	HANDLE stat, worker; // stat thread, worker thread
 	// variables connected to stat thread
 	StatData* s; // pointer so that it can be changed in other functions
-	void update_receiver_info(ReceiverHeader* rh);
+	void update_receiver_info(ReceiverHeader* rh, int packet_size);
 	void calculate_RTO(double sample_RTT);
 
 	// send function stuff
@@ -40,7 +40,7 @@ class SenderSocket {
 
 	// thread functions
 	clock_t timer_expire; // time for base packet so be sent
-	bool receiveACK();
+	bool receive_ACK();
 	clock_t beginRTT, endRTT;
 	int nextToSend;
 
