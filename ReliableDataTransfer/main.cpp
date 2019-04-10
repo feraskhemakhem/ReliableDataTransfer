@@ -25,8 +25,10 @@ void transfer(char* argv[]) {
 	clock_t buffer_timer = clock();
 	UINT64 dwordBufSize = (UINT64)1 << power;
 	DWORD *dwordBuf = new DWORD[dwordBufSize]; // user-requested buffer
-	for (UINT64 i = 0; i < dwordBufSize; i++) // required initialization for array with unique values
+	for (UINT64 i = 0; i < dwordBufSize; i++) { // required initialization for array with unique values
 		dwordBuf[i] = i;
+		// printf("%d ", dwordBuf[i]);
+	}
 
 	printf("done in %d ms\n", clock() - buffer_timer);
 
@@ -45,14 +47,15 @@ void transfer(char* argv[]) {
 		exit(-1);
 	}
 
-	printf("Main:\tconnected to %s in %.3f sec, pkt size %d bytes\n", targetHost, ss.get_elapsed_time(), ss.get_packet_size());
+	printf("Main:\tconnected to %s in %.3f sec, pkt size %d bytes\n", targetHost, ss.get_elapsed_time(), MAX_PKT_SIZE);
 
 	/////////////////////////////// send ///////////////////////////////
 
 	char *charBuf = (char*)dwordBuf; // this buffer goes into socket
+	// printf("charBuf is %s\n", charBuf);
 	UINT64 byteBufferSize = dwordBufSize << 2; // convert to bytes
+
 	UINT64 off = 0; // current position in buffer
-	buffer_timer = clock();
 	while (off < byteBufferSize)
 	{
 		// decide the size of next chunk
@@ -66,24 +69,36 @@ void transfer(char* argv[]) {
 		off += bytes;
 	}
 
-	double elapsed_time = (clock() - buffer_timer) / 1000.0; // elapsed time from first send to last ACK non-FIN
+	double elapsed_time; // elapsed time from first send to last ACK non-FIN
 
 	/////////////////////////////// close ///////////////////////////////
 
-	if ((status = ss.Close()) != STATUS_OK) {
+	if ((status = ss.Close(elapsed_time)) != STATUS_OK) {
 		// error handing: print status and quit
 		printf("Main:\t connect failed with status %d\n", status);
 		exit(-1);
 	}
 
 	DWORD check = cs.CRC32((unsigned char*)charBuf, byteBufferSize);
-	printf("Main:\ttransfer finished in %.3f sec\n", elapsed_time); // elapsed time is between first non-SYN sent and last non-FIN ACK
-	printf("Main:\testRTT %.3f, ideal rate %.2f\n", ss.get_estRTT(), 420.69);
+	printf("Main:\ttransfer finished in %.3f sec, %.2f Kbps, checksum %X\n", elapsed_time, off/elapsed_time, check); // elapsed time is between first non-SYN sent and last non-FIN ACK
+	printf("Main:\testRTT %.3f, ideal rate %.2f\n", ss.get_estRTT(), 777777777.77);
 		
 }
 
 int main(int argc, char* argv[])
 {
+
+	/* 
+	 * args: 
+	 * (1) destination server
+	 * (2) power of 2 of buffer size
+	 * (3) sender window size
+	 * (4) round-trip propogration delay (RTT)
+	 * (5) probability of loss in forward path
+	 * (6) probability of loss in return path
+	 * (6) speed of bottlenecked link (Mbps)
+	*/
+
 	WSADATA wsaData;
 
 	//Initialize WinSock; once per program run

@@ -26,8 +26,11 @@ class SenderSocket {
 	HANDLE stat, worker; // stat thread, worker thread
 	// variables connected to stat thread
 	StatData* s; // pointer so that it can be changed in other functions
-	void update_receiver_info(ReceiverHeader* rh, int packet_size);
+	void update_receiver_info(ReceiverHeader* rh);
 	void calculate_RTO(double sample_RTT);
+
+	// timing for printing
+	clock_t begin_transfer;
 
 	// send function stuff
 	int next_seq;
@@ -41,10 +44,11 @@ class SenderSocket {
 	// thread functions
 	clock_t timer_expire; // time for base packet so be sent
 	bool receive_ACK();
+	int retx_count, sameack_count; // count for checking if same base ack received many times
 	clock_t beginRTT, endRTT;
 	int nextToSend;
 
-	// testing
+	// sockaddr stuff
 	char* targetHost;
 	int port;
 
@@ -52,7 +56,7 @@ public:
 	SenderSocket(); // start timer, stat thread, etc
 	int Open(char* targetHost, int port, int window_size, LinkProperties* lp); // targetHost, MAGIC_PORT, senderWindow, &lp
 	int Send(char* charBuf, int bytes); // charBuf + off, bytes
-	int Close();
+	int Close(double &elapsed_transfer);
 	double get_elapsed_time() { return elapsed_time; }
 	double get_estRTT() { return this->s->RTT; }
 	int get_packet_size() { return packet_size; }
