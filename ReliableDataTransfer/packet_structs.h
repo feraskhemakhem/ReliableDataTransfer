@@ -63,7 +63,7 @@ struct Packet {
 struct StatData {
 	clock_t start_time; // local to the thread function
 
-	int sender_wind_base; // base of the sender window
+	int sender_wind_base, old_sender_wind_base; // base of the sender window // for the goodput
 	double data_ACKed; // MB of data acked by receiver
 	int* next_seq; // next expected seq # --> ReceiverHeader
 	int timeout_counter; // every timeout
@@ -71,12 +71,13 @@ struct StatData {
 	DWORD sender_wind_size; // --> ss.Open parameter
 	DWORD receiver_wind_size;  // --> ReceiverHeader
 	DWORD effective_wind_size; // --> ss.Open at the end
-	double goodput; // Mbps speed of app consuming data at receiver [(new - old) * 8 * (MAX_PKT_SIZE - sizeof(SenderDataHeader)]
 
 	double RTT; // estRTT --> all functions
 	HANDLE isDone; // --> ss.Close
-	void set_new_goodput(double new_goodput) {
-		this->goodput = (new_goodput - this->goodput) * 8 * (MAX_PKT_SIZE - sizeof(SenderDataHeader));
+	double get_goodput() {
+		double goodput = (this->sender_wind_base - this->old_sender_wind_base) * 8 * (MAX_PKT_SIZE - sizeof(SenderDataHeader)) / (2 * 1e6);
+		this->old_sender_wind_base = this->sender_wind_base;
+		return goodput;
 	}
 	void set_effective_win_size() { // effective window is min(sender_wind_size, receiver_wind_size);
 		effective_wind_size = min(sender_wind_size, receiver_wind_size);

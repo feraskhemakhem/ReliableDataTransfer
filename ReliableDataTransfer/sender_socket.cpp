@@ -20,12 +20,10 @@ SenderSocket::SenderSocket() {
 	sock = INVALID_SOCKET; 
 	elapsed_time = 0.0;
 	this->s = new StatData(&(this->next_seq));
-	this->s->goodput = 0.0;
+	this->s->old_sender_wind_base = this->s->sender_wind_base = 0;
 	this->s->start_time = this->start_time;
 	this->eventQuit = CreateEventA(NULL, true, false, NULL); // TODO: declutter isDone and this into one
-	//this->socketReceiveReady = WSACreateEvent();
 	this->socketReceiveReady = CreateEventA(NULL, false, false, NULL);
-
 	devRTT = 0;
 }
 
@@ -124,12 +122,12 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 
 		////////////////////////// send request to the server //////////////////////////
 		if ((packet_size = sendto(sock, (char*)&sh, sizeof(SenderSynHeader), 0, (struct sockaddr*)&request, sizeof(request))) == SOCKET_ERROR) {
-			printf("[%.3f] --> failed sendto with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
+			printf("[%.2f] --> failed sendto with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
 			return FAILED_SEND;
 		}
 
 		beginRTT = (clock() - this->start_time) / 1000.0; // elapsed open is used for elapsed time if SYN and SYN-ACK work
-		// printf("[%.3f] --> SYN %d (attempt %d of %d, RTO %.3f) to %s\n", this->link_prop->RTT, seq_number, i, 3, this->RTO, inet_ntoa(request.sin_addr));
+		// printf("[%.2f] --> SYN %d (attempt %d of %d, RTO %.3f) to %s\n", this->link_prop->RTT, seq_number, i, 3, this->RTO, inet_ntoa(request.sin_addr));
 
 		// return of the handshake
 
@@ -157,7 +155,7 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 
 	// in theory select told us that sock is ready to recvfrom, so no need to reattempt
 	if ((packet_size = recvfrom(sock, ans, MAX_PKT_SIZE, 0, (struct sockaddr*)&response, &response_size)) == SOCKET_ERROR) {
-		printf("[%.3f] <-- failed recvfrom with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
+		printf("[%.2f] <-- failed recvfrom with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
 		return FAILED_RECV;
 	}
 
@@ -242,7 +240,6 @@ int SenderSocket::Send(char* charBuf, int bytes, int type) {
 
 /******************** CLOSE ********************/
 int SenderSocket::Close(double &elapsed_time) {
-	printf("Closing...\n");
 	if (sock == INVALID_SOCKET) {
 		// sock set in Open
 		return NOT_CONNECTED;
@@ -271,6 +268,16 @@ int SenderSocket::Close(double &elapsed_time) {
 	SetEvent(this->s->isDone); // trigger waitforoneobject
 	CloseHandle(stat); // join
 
+	// testing Ngyuen's approach
+	socketReceiveReady = WSACreateEvent();
+
+	// reinding to socket (select)
+	if (WSAEventSelect(sock, socketReceiveReady, FD_READ) == SOCKET_ERROR) {
+		printf("socket error in WSAEventSelect %d\n", WSAGetLastError());
+		exit(-1);
+	}
+	
+
 	// send request for handshake
 	SenderSynHeader sh{};
 	SenderDataHeader sender_data{};
@@ -287,12 +294,12 @@ int SenderSocket::Close(double &elapsed_time) {
 
 		////////////////////////// send request to the server //////////////////////////
 		if ((packet_size = sendto(sock, (char*)&sh, sizeof(SenderSynHeader), 0, (struct sockaddr*)&req, sizeof(req))) == SOCKET_ERROR) {
-			printf("[%.3f] --> failed sendto with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
+			printf("[%.2f] --> failed sendto with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
 			return FAILED_SEND;
 		}
 
 		beginRTT = (clock() - this->start_time) / 1000.0; // elapsed open is used for elapsed time if SYN and SYN-ACK work
-		printf("[%.2f] --> FIN %d (attempt %d of %d, RTO %.3f)\n", beginRTT, this->next_seq, i, 5, this->RTO);
+		// printf("[%.2f] --> FIN %d (attempt %d of %d, RTO %.3f)\n", beginRTT, this->next_seq, i, 5, this->RTO);
 
 		// return of the handshake
 		
@@ -304,6 +311,7 @@ int SenderSocket::Close(double &elapsed_time) {
 		else if (packet_size == WAIT_OBJECT_0) {
 			break;
 		}
+		printf("%X\n", packet_size);
 	}
 	// printf("%d\n", sizeof(SenderSynHeader));
 
@@ -322,13 +330,13 @@ int SenderSocket::Close(double &elapsed_time) {
 	calculate_RTO((endRTT - beginRTT)/1000.0);
 	update_receiver_info((ReceiverHeader*)ans);
 
-	printf("[%.2f] <-- FIN-ACK %d window %X\n", endRTT, this->s->next_seq, this->s->receiver_wind_size);
+	printf("[%.2f] <-- FIN-ACK %d window %X\n", endRTT, *(this->s->next_seq), this->s->receiver_wind_size);
 
 
 	// close socket to end communication... if already closed or not open, error will yield
 	if (closesocket(sock) == SOCKET_ERROR) {
 		// should not even get here
-		printf("[%.3f] --> failed to close socket with %d\n", (clock() - start_time) / 1000.0, WSAGetLastError()); // check if this is how they want it
+		printf("[%.2f] --> failed to close socket with %d\n", (clock() - start_time) / 1000.0, WSAGetLastError()); // check if this is how they want it
 		return NOT_CONNECTED;
 	}
 	sock = INVALID_SOCKET;
@@ -380,7 +388,7 @@ void SenderSocket::runWorker(void)
 			break;
 			// 
 		default:// errored out - WAIT_FAILED D:
-			printf("[%.3f] --> WaitForMultipleObjects failed in worker thread.\nExiting...\n", clock() - start_time);
+			printf("[%.2f] --> WaitForMultipleObjects failed in worker thread.\nExiting...\n", (clock() - start_time) / 1000.0);
 			exit(-1);
 		}
 		if (nextToSend == this->s->sender_wind_base || retx // first packet of window or just did a retx(timeout / 3 - dup ACK
@@ -405,64 +413,11 @@ DWORD WINAPI statThread(LPVOID pParam)
 {
 	StatData* stat = (StatData*)pParam;
 	while (WaitForSingleObject(stat->isDone, 2000) == WAIT_TIMEOUT) {
-		double time = (clock() - stat->start_time) / 1000;
-		printf("[%2d] B %6d ( %3.1f MB) N %6d T %d F %d W %d S %.3f Mbps RTT %.3f\n", (clock() - stat->start_time) / 1000, stat->sender_wind_base, stat->data_ACKed, *(stat->next_seq),
-			stat->timeout_counter, stat->fast_retx_counter, stat->effective_wind_size, stat->goodput, stat->RTT);
+		int time = (clock() - stat->start_time) / 1000;
+		printf("[%2d] B %6d ( %3.1f MB) N %6d T %d F %d W %d S %.3f Mbps RTT %.3f\n", time, stat->sender_wind_base, stat->data_ACKed, *(stat->next_seq),
+			stat->timeout_counter, stat->fast_retx_counter, stat->effective_wind_size, stat->get_goodput(), stat->RTT);
 	}
 	return 0;
-}
-
-
-//////////////////// misc functions ////////////////////
-int SenderSocket::initialize_sockaddr(struct sockaddr_in& server, char* host, int port) {
-
-	// structure used in DNS lookups
-	struct hostent *remote;
-
-	// structure for connecting to server
-	memset(&server, 0, sizeof(server));
-	server.sin_family = AF_INET;					// sets the family to IPv4
-	server.sin_port = htons(port);					// provides the port 0 to bind to... 
-
-	if (host != NULL) {
-		DWORD IP;
-		// inet_pton(AF_INET, targetHost, &IP);
-		IP = inet_addr(host);
-		if (IP == INADDR_NONE) { //not an IP
-			// if not a valid IP, then do a DNS lookup
-			if ((remote = gethostbyname(host)) == NULL)
-			{
-				printf("[%.3f] --> target %s is invalid\n", (clock() - start_time) / 1000.0, host);
-				return INVALID_NAME;
-			}
-			else { // take the first IP address and copy into sin_addr 
-				memcpy((char *)&(server.sin_addr), remote->h_addr, remote->h_length);
-				IP = server.sin_addr.S_un.S_addr;
-			}
-		}
-		else {
-			server.sin_addr.S_un.S_addr = IP;
-		}
-	}
-	else
-		server.sin_addr.s_addr = INADDR_ANY;			// allows me to receive packets on all physics interfaces of the system
-
-	return STATUS_OK;
-}
-
-void SenderSocket::update_receiver_info(ReceiverHeader* rh) {
-	this->s->receiver_wind_size = rh->recvWnd;
-	// this->s->next_seq = rh->ackSeq;
-	this->s->sender_wind_base = rh->ackSeq;
-	this->s->data_ACKed += packet_size * 1e-6; // bytes to megabytes
-	this->s->set_new_goodput(packet_size * 1e-6 / (this->endRTT - this->beginRTT)); // adding memory / time for goodput
-}
-
-void SenderSocket::calculate_RTO(double sample_RTT) {
-	double alpha = 0.125, beta = 0.25;
-	this->s->RTT = (1 - alpha) * this->s->RTT + alpha * sample_RTT;
-	devRTT = (1 - beta) * devRTT + beta * fabs(sample_RTT - this->s->RTT);
-	RTO = this->s->RTT + 4 * max(devRTT, 0.010);
 }
 
 
@@ -494,7 +449,7 @@ bool SenderSocket::receive_ACK() {
 
 	// in theory select told us that sock is ready to recvfrom, so no need to reattempt
 	if ((packet_size = recvfrom(sock, ans, MAX_PKT_SIZE, 0, (struct sockaddr*)&response, &response_size)) == SOCKET_ERROR) {
-		printf("[%.3f] <-- failed recvfrom with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
+		printf("[%.2f] <-- failed recvfrom with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
 		exit(-1);
 	}
 	endRTT = clock();
@@ -520,4 +475,60 @@ bool SenderSocket::receive_ACK() {
 	}
 	
 	return false;
+}
+
+
+
+//////////////////// misc functions ////////////////////
+int SenderSocket::initialize_sockaddr(struct sockaddr_in& server, char* host, int port) {
+
+	// structure used in DNS lookups
+	struct hostent *remote;
+
+	// structure for connecting to server
+	memset(&server, 0, sizeof(server));
+	server.sin_family = AF_INET;					// sets the family to IPv4
+	server.sin_port = htons(port);					// provides the port 0 to bind to... 
+
+	if (host != NULL) {
+		DWORD IP;
+		// inet_pton(AF_INET, targetHost, &IP);
+		IP = inet_addr(host);
+		if (IP == INADDR_NONE) { //not an IP
+			// if not a valid IP, then do a DNS lookup
+			if ((remote = gethostbyname(host)) == NULL)
+			{
+				printf("[%.2f] --> target %s is invalid\n", (clock() - start_time) / 1000.0, host);
+				return INVALID_NAME;
+			}
+			else { // take the first IP address and copy into sin_addr 
+				memcpy((char *)&(server.sin_addr), remote->h_addr, remote->h_length);
+				IP = server.sin_addr.S_un.S_addr;
+			}
+		}
+		else {
+			server.sin_addr.S_un.S_addr = IP;
+		}
+	}
+	else
+		server.sin_addr.s_addr = INADDR_ANY;			// allows me to receive packets on all physics interfaces of the system
+
+	return STATUS_OK;
+}
+
+void SenderSocket::update_receiver_info(ReceiverHeader* rh) {
+	this->s->receiver_wind_size = rh->recvWnd;
+	this->s->sender_wind_base = rh->ackSeq;
+	this->s->data_ACKed += packet_size * 1e-6; // bytes to megabytes
+}
+
+void SenderSocket::calculate_RTO(double sample_RTT) {
+	double alpha = 0.125, beta = 0.25;
+	this->s->RTT = (1 - alpha) * this->s->RTT + alpha * sample_RTT;
+	devRTT = (1 - beta) * devRTT + beta * fabs(sample_RTT - this->s->RTT);
+	RTO = this->s->RTT + 4 * max(devRTT, 0.010);
+}
+
+double SenderSocket::calcualte_ideal_rate() {
+	return this->s->sender_wind_size * MAX_PKT_SIZE * 8 / (1000.0 * this->s->RTT); // ideal_rate = (windowSize*MAX_PKT_SIZE*8/1000)/estRTT
 }
