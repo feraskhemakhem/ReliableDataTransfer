@@ -55,7 +55,7 @@ class SenderSocket {
 public:
 	SenderSocket(); // start timer, stat thread, etc
 	int Open(char* targetHost, int port, int window_size, LinkProperties* lp); // targetHost, MAGIC_PORT, senderWindow, &lp
-	int Send(char* charBuf, int bytes); // charBuf + off, bytes
+	int Send(char* charBuf, int bytes, int type = 2); // charBuf + off, bytes, data default
 	int Close(double &elapsed_transfer);
 	double get_elapsed_time() { return elapsed_time; }
 	double get_estRTT() { return this->s->RTT; }

@@ -65,7 +65,7 @@ struct StatData {
 
 	int sender_wind_base; // base of the sender window
 	double data_ACKed; // MB of data acked by receiver
-	int next_seq; // next expected seq # --> ReceiverHeader
+	int* next_seq; // next expected seq # --> ReceiverHeader
 	int timeout_counter; // every timeout
 	int fast_retx_counter; //
 	DWORD sender_wind_size; // --> ss.Open parameter
@@ -81,6 +81,6 @@ struct StatData {
 	void set_effective_win_size() { // effective window is min(sender_wind_size, receiver_wind_size);
 		effective_wind_size = min(sender_wind_size, receiver_wind_size);
 	}
-	StatData() { memset(this, 0, sizeof(*this)); this->isDone = CreateEventA(NULL, true, false, NULL);} // itialize all variables to 0
+	StatData(int* val) { memset(this, 0, sizeof(*this)); this->isDone = CreateEventA(NULL, true, false, NULL); next_seq = val; } // itialize all variables to 0
 };
 
