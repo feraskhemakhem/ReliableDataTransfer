@@ -82,6 +82,9 @@ struct StatData {
 	void set_effective_win_size() { // effective window is min(sender_wind_size, receiver_wind_size);
 		effective_wind_size = min(sender_wind_size, receiver_wind_size);
 	}
+	double get_data_ACKed() {
+		return this->sender_wind_base * (MAX_PKT_SIZE - sizeof(SenderDataHeader)) * 1e-6; // MB, not Mb
+	}
 	StatData(int* val) { memset(this, 0, sizeof(*this)); this->isDone = CreateEventA(NULL, true, false, NULL); next_seq = val; } // itialize all variables to 0
 };
 

@@ -326,11 +326,11 @@ int SenderSocket::Close(double &elapsed_time) {
 		printf("[%.2f] <-- failed recvfrom with %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
 		return FAILED_RECV;
 	}
-	endRTT = (clock() - this->start_time) / 1000.0;
+	endRTT = clock();
 	calculate_RTO((endRTT - beginRTT)/1000.0);
 	update_receiver_info((ReceiverHeader*)ans);
 
-	printf("[%.2f] <-- FIN-ACK %d window %X\n", endRTT, *(this->s->next_seq), this->s->receiver_wind_size);
+	printf("[%.2f] <-- FIN-ACK %d window %X\n", (endRTT - this->start_time) / 1000.0, *(this->s->next_seq), this->s->receiver_wind_size);
 
 
 	// close socket to end communication... if already closed or not open, error will yield
@@ -414,7 +414,7 @@ DWORD WINAPI statThread(LPVOID pParam)
 	StatData* stat = (StatData*)pParam;
 	while (WaitForSingleObject(stat->isDone, 2000) == WAIT_TIMEOUT) {
 		int time = (clock() - stat->start_time) / 1000;
-		printf("[%2d] B %6d ( %3.1f MB) N %6d T %d F %d W %d S %.3f Mbps RTT %.3f\n", time, stat->sender_wind_base, stat->data_ACKed, *(stat->next_seq),
+		printf("[%2d] B %6d ( %3.1f MB) N %6d T %d F %d W %d S %.3f Mbps RTT %.3f\n", time, stat->sender_wind_base, stat->get_data_ACKed(), *(stat->next_seq),
 			stat->timeout_counter, stat->fast_retx_counter, stat->effective_wind_size, stat->get_goodput(), stat->RTT);
 	}
 	return 0;
