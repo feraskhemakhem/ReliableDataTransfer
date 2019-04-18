@@ -13,6 +13,7 @@ DWORD WINAPI workerThread(LPVOID pParam);
 
 /******************** CONSTRUCTOR ********************/
 SenderSocket::SenderSocket() {
+	sendcnt = 0, recvcnt = 0;
 	// itializations
 	this->start_time = clock(); 
 	this->next_seq = this->nextToSend = this->retx_count = this->sameack_count = 0;
@@ -127,8 +128,18 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 		}
 
 		beginRTT = (clock() - this->start_time) / 1000.0; // elapsed open is used for elapsed time if SYN and SYN-ACK work
-		// printf("[%.2f] --> SYN %d (attempt %d of %d, RTO %.3f) to %s\n", this->link_prop->RTT, seq_number, i, 3, this->RTO, inet_ntoa(request.sin_addr));
 
+		// increase incoming and outgoing capacity
+		int kernelBuffer = 20e6; // 20 meg
+		if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (char*)&kernelBuffer, sizeof(int)) == SOCKET_ERROR) {
+			printf("[%.2f] --> failed setsockopt rcvbuf %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
+			return FAILED_SEND;
+		}
+		kernelBuffer = 20e6; // 20 meg
+		if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, (char*)&kernelBuffer, sizeof(int)) == SOCKET_ERROR) {
+			printf("[%.2f] --> failed setsockopt sndbuf %d\n", (clock() - this->start_time) / 1000.0, WSAGetLastError());
+			return FAILED_SEND;
+		}
 		// return of the handshake
 
 		////////////////////////// get ready to recieve response and check for timeout //////////////////////////
@@ -327,7 +338,6 @@ int SenderSocket::Close(double &elapsed_time) {
 		return FAILED_RECV;
 	}
 	endRTT = clock();
-	calculate_RTO((endRTT - beginRTT)/1000.0);
 	update_receiver_info((ReceiverHeader*)ans);
 
 	printf("[%.2f] <-- FIN-ACK %d window %X\n", (endRTT - this->start_time) / 1000.0, *(this->s->next_seq), this->s->receiver_wind_size);
@@ -356,6 +366,10 @@ void SenderSocket::runWorker(void)
 	DWORD timeout;
 	HANDLE events[] = { socketReceiveReady, full };
 	while (true)
+		if (this->retx_count >= 50) {
+			printf("[%.2f] --> 50 retx attempts occured. Exiting...\n", (clock() - this->start_time) / 1000.0);
+			exit(-1);
+		}
 	{
 		// set timeout
 		if (this->s->sender_wind_base + this->s->sender_wind_size <= nextToSend) // if worker and sender dont catch up to each other // pending packets
@@ -395,13 +409,17 @@ void SenderSocket::runWorker(void)
 			|| this->s->sender_wind_base != old_wind_base) { // senderBase moved forward
 			// printf("timer reset\n");
 			old_wind_base = this->s->sender_wind_base; // in case the base moved forward, for later checks
-			this->calculate_RTO((endRTT - beginRTT)/1000.0);
+			//this->calculate_RTO((endRTT - beginRTT)/1000.0);
+			beginRTT = clock();
 		}
 	}
 }
 
 DWORD WINAPI workerThread(LPVOID pParam) {
 	SenderSocket *ss = (SenderSocket *)pParam;
+	// set time-critical priority
+	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+
 	ss->runWorker();
 	return 0;
 }
@@ -434,7 +452,7 @@ bool SenderSocket::send_packet(int index) { // for Packet type only! // doesn't 
 		printf("Failed in sendto\n");
 		exit(-1);
 	}
-	beginRTT = clock();
+	// beginRTT = clock();
 	return true;
 }
 
@@ -470,8 +488,9 @@ bool SenderSocket::receive_ACK() {
 	}
 	else { // if base is moved
 		ReleaseSemaphore(empty, rh->ackSeq - this->s->sender_wind_base, NULL);
-		this->retx_count = 0;
+		// this->retx_count = 0;
 		update_receiver_info(rh); // moves the base
+		calculate_RTO((endRTT - beginRTT)/1000.0);
 	}
 	
 	return false;
@@ -524,6 +543,7 @@ void SenderSocket::update_receiver_info(ReceiverHeader* rh) {
 
 void SenderSocket::calculate_RTO(double sample_RTT) {
 	double alpha = 0.125, beta = 0.25;
+//	this->s->RTT = max((1 - alpha) * this->s->RTT + alpha * sample_RTT, 0.250);
 	this->s->RTT = (1 - alpha) * this->s->RTT + alpha * sample_RTT;
 	devRTT = (1 - beta) * devRTT + beta * fabs(sample_RTT - this->s->RTT);
 	RTO = this->s->RTT + 4 * max(devRTT, 0.010);

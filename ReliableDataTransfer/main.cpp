@@ -80,8 +80,8 @@ void transfer(char* argv[]) {
 	}
 
 	DWORD check = cs.CRC32((unsigned char*)charBuf, byteBufferSize);
-	printf("Main:\ttransfer finished in %.3f sec, %.2f Kbps, checksum %X\n", elapsed_time, off/elapsed_time, check); // elapsed time is between first non-SYN sent and last non-FIN ACK
-	printf("Main:\testRTT %.3f, ideal rate %.2f\n", ss.get_estRTT(), ss.calcualte_ideal_rate());
+	printf("Main:\ttransfer finished in %.3f sec, %.2f Kbps, checksum %X\n", elapsed_time, off/(elapsed_time*1e3), check); // elapsed time is between first non-SYN sent and last non-FIN ACK
+	printf("Main:\testRTT %.3f, ideal rate %.2f Kbbps\n", ss.get_estRTT(), ss.calcualte_ideal_rate());
 		
 }
 

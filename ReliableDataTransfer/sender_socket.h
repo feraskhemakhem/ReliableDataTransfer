@@ -52,6 +52,9 @@ class SenderSocket {
 	char* targetHost;
 	int port;
 
+	// testing stuff
+	int sendcnt, recvcnt;
+
 public:
 	// core functionality 
 	SenderSocket(); // start timer, stat thread, etc
