@@ -1,3 +1,3 @@
 # ReliableDataTransfer
 
-Part 1 implements connection handshakes (SYN) and termination (FIN).
+Part 2 implements connection sending packets and receiving ACKs when sender window is 1 (synchronous).
