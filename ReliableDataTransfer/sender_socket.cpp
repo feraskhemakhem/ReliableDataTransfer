@@ -13,7 +13,6 @@ DWORD WINAPI workerThread(LPVOID pParam);
 
 /******************** CONSTRUCTOR ********************/
 SenderSocket::SenderSocket() {
-	sendcnt = 0, recvcnt = 0;
 	// itializations
 	this->start_time = clock(); 
 	this->next_seq = this->nextToSend = this->retx_count = this->sameack_count = 0;
@@ -61,6 +60,7 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	this->s->sender_wind_size = this->W = window_size;
 	this->s->RTT = link_prop->RTT;
 	this->RTO = max(1.0, 2 * this->s->RTT);
+	this->beginRTTlist = new clock_t[this->W];
 
 	// initalize sempahore handles - TODO: MOVE THIS AROUND SO THAT IT USES EFFECTIVE WINDOW SIZE
 	this->full = CreateSemaphore(NULL, 0, window_size, NULL);
@@ -366,11 +366,11 @@ void SenderSocket::runWorker(void)
 	DWORD timeout;
 	HANDLE events[] = { socketReceiveReady, full };
 	while (true)
+	{
 		if (this->retx_count >= 50) {
 			printf("[%.2f] --> 50 retx attempts occured. Exiting...\n", (clock() - this->start_time) / 1000.0);
 			exit(-1);
 		}
-	{
 		// set timeout
 		if (this->s->sender_wind_base + this->s->sender_wind_size <= nextToSend) // if worker and sender dont catch up to each other // pending packets
 			timeout = this->RTO * 1e3; // also if the sender window + size (end of wind) is not greater than nextToSend (still inside of window)
@@ -448,11 +448,11 @@ bool SenderSocket::send_packet(int index) { // for Packet type only! // doesn't 
 	struct sockaddr_in req; // can this be shared across all sends - yes TODO
 	initialize_sockaddr(req, this->targetHost, this->port);
 
-	if (sendto(sock, (char*)(this->pending_pkts[index % this->s->sender_wind_size].buf), this->pending_pkts[index % this->s->sender_wind_size].size, 0, (struct sockaddr*)&req, sizeof(req)) == SOCKET_ERROR) {
+	if (sendto(sock, (char*)(this->pending_pkts[index % this->W].buf), this->pending_pkts[index % this->W].size, 0, (struct sockaddr*)&req, sizeof(req)) == SOCKET_ERROR) {
 		printf("Failed in sendto\n");
 		exit(-1);
 	}
-	// beginRTT = clock();
+	beginRTTlist[index % this->W] = clock(); // start RTT timer
 	return true;
 }
 
@@ -476,7 +476,7 @@ bool SenderSocket::receive_ACK() {
 	ReceiverHeader *rh = (ReceiverHeader*)ans;
 	// printf("rh->ackSeq %d sender_base %d\t", rh->ackSeq, this->s->sender_wind_base);
 	// check if same ack
-	if (rh->ackSeq == this->s->sender_wind_base+1 && this->sameack_count != 0) { // if window base is same as ACK value (fast retx counter)
+	if (rh->ackSeq == this->s->sender_wind_base) { // if window base is same as ACK value (fast retx counter)
 		this->sameack_count++;
 		if (this->sameack_count >= 3) {
 			send_packet(rh->ackSeq); // fast rext
@@ -488,9 +488,10 @@ bool SenderSocket::receive_ACK() {
 	}
 	else { // if base is moved
 		ReleaseSemaphore(empty, rh->ackSeq - this->s->sender_wind_base, NULL);
-		// this->retx_count = 0;
+		this->retx_count = 0; // for 50 max retx
+		this->sameack_count = 0; // for fast retx
 		update_receiver_info(rh); // moves the base
-		calculate_RTO((endRTT - beginRTT)/1000.0);
+		calculate_RTO((endRTT - beginRTTlist[rh->ackSeq % this->W])/1000.0);
 	}
 	
 	return false;
@@ -538,6 +539,7 @@ int SenderSocket::initialize_sockaddr(struct sockaddr_in& server, char* host, in
 void SenderSocket::update_receiver_info(ReceiverHeader* rh) {
 	this->s->receiver_wind_size = rh->recvWnd;
 	this->s->sender_wind_base = rh->ackSeq;
+	this->s->set_effective_win_size();
 	this->s->data_ACKed += packet_size * 1e-6; // bytes to megabytes
 }
 

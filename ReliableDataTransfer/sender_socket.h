@@ -47,13 +47,11 @@ class SenderSocket {
 	int retx_count, sameack_count; // count for checking if same base ack received many times
 	clock_t beginRTT, endRTT;
 	int nextToSend;
+	clock_t* beginRTTlist;
 
 	// sockaddr stuff
 	char* targetHost;
 	int port;
-
-	// testing stuff
-	int sendcnt, recvcnt;
 
 public:
 	// core functionality 
