@@ -37,9 +37,12 @@ class SenderSocket {
 	bool send_packet(int index); // for Packet type only!
 
 	// shared buffer stuff
-	HANDLE eventQuit, empty, full, socketReceiveReady;
+	HANDLE eventQuit, empty, full, socketReceiveReady, finishSend;
 	Packet *pending_pkts;
 	int W;
+	int lastReleased;
+	int lastSeq;  // send tells the worker thread that this is the last packet, after which fin can send
+	long pending_packets;
 
 	// thread functions
 	clock_t timer_expire; // time for base packet so be sent
@@ -53,11 +56,13 @@ class SenderSocket {
 	char* targetHost;
 	int port;
 
+	bool debug;
+
 public:
 	// core functionality 
 	SenderSocket(); // start timer, stat thread, etc
-	int Open(char* targetHost, int port, int window_size, LinkProperties* lp); // targetHost, MAGIC_PORT, senderWindow, &lp
-	int Send(char* charBuf, int bytes, int type = 2); // charBuf + off, bytes, data default
+	int Open(char* targetHost, int port, int window_size, LinkProperties* lp, bool debug = false); // targetHost, MAGIC_PORT, senderWindow, &lp
+	int Send(char* charBuf, int bytes, int type = 2); // charBuf + off, bytes, data default (0 = SYN, 1 = FIN, 3 = lastPacket)
 	int Close(double &elapsed_transfer);
 	~SenderSocket();
 

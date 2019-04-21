@@ -16,14 +16,17 @@ SenderSocket::SenderSocket() {
 	// itializations
 	this->start_time = clock(); 
 	this->next_seq = this->nextToSend = this->retx_count = this->sameack_count = 0;
+	this->lastSeq = -1;
 	seq_number = 0; 
+	this->pending_packets = 0;
 	sock = INVALID_SOCKET; 
 	elapsed_time = 0.0;
 	this->s = new StatData(&(this->next_seq));
 	this->s->old_sender_wind_base = this->s->sender_wind_base = 0;
 	this->s->start_time = this->start_time;
-	this->eventQuit = CreateEventA(NULL, true, false, NULL); // TODO: declutter isDone and this into one
-	this->socketReceiveReady = CreateEventA(NULL, false, false, NULL);
+	this->eventQuit = CreateEvent(NULL, true, false, NULL); // TODO: declutter isDone and this into one
+	this->socketReceiveReady = CreateEvent(NULL, false, false, NULL);
+	this->finishSend = CreateSemaphore(NULL, 0, 1, NULL); // semaphore to wait for worker to finish
 	devRTT = 0;
 }
 
@@ -35,10 +38,12 @@ SenderSocket::~SenderSocket() {
 		CloseHandle(stat);
 	}
 	if (WaitForSingleObject(this->worker, 0) == WAIT_OBJECT_0) {
+		SetEvent(this->finishSend);
 		CloseHandle(worker);
 	}
 
 	this->s->isDone = NULL;
+	this->finishSend = NULL;
 	stat = NULL;
 	worker = NULL;
 
@@ -54,8 +59,8 @@ SenderSocket::~SenderSocket() {
 }
 
 /******************** OPEN ********************/
-int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperties* link_prop) {
-
+int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperties* link_prop, bool debug) {
+	this->debug = debug;
 	/////////////////////// initializations ///////////////////////
 	this->s->sender_wind_size = this->W = window_size;
 	this->s->RTT = link_prop->RTT;
@@ -64,7 +69,7 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 
 	// initalize sempahore handles - TODO: MOVE THIS AROUND SO THAT IT USES EFFECTIVE WINDOW SIZE
 	this->full = CreateSemaphore(NULL, 0, window_size, NULL);
-	this->empty = CreateSemaphore(NULL, window_size, window_size, NULL);
+	this->empty = CreateSemaphore(NULL, 0, window_size, NULL);
 
 	// initialize packet buffer and buffer of each inidividual packet
 	pending_pkts = new Packet[window_size * MAX_PKT_SIZE];
@@ -146,7 +151,7 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 
 
 		if ((packet_size = WaitForSingleObject(socketReceiveReady, this->RTO * 1e3)) == WAIT_FAILED) {
-			printf("WaitForSingleObject error\n");
+			printf("WaitForSingleObject error %d\n", WSAGetLastError());
 			exit(-1);
 		}
 		else if (packet_size == WAIT_OBJECT_0) {
@@ -186,8 +191,8 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	
 	
 	// flow control
-	int lastReleased = min(window_size, rh->recvWnd);
-	ReleaseSemaphore(empty, lastReleased, NULL);
+	this->lastReleased = min(window_size, rh->recvWnd);
+	ReleaseSemaphore(empty, this->lastReleased, NULL);
 	 
 	// post-flow control
 	this->s->receiver_wind_size = rh->recvWnd;
@@ -227,10 +232,23 @@ int SenderSocket::Send(char* charBuf, int bytes, int type) {
 	p->size = sizeof(SenderDataHeader) + bytes;
 	p->txTime = (clock_t)this->s->RTT * CLOCKS_PER_SEC; // does this work?
 	sdh->flags = Flags(); // defaulted to 0's with memset
-	if (type == 0) // if ACK
+	switch (type) {
+		case 0:
+			sdh->flags.SYN = 1;
+			break;
+		case 1:
+			sdh->flags.FIN = 1;
+			break;
+		case 3:
+			this->lastSeq = this->next_seq + 1;
+			if (this->debug)
+				printf("SEND() : lastSeq is %d\n", this->lastSeq);
+			break;
+	}
+	/*if (type == 0) // if ACK
 		sdh->flags.SYN = 1;
 	if (type == 1) // if FIN
-		sdh->flags.FIN = 1;
+		sdh->flags.FIN = 1;*/
 	sdh->seq = this->next_seq;
 	// printf("Size senderdata %d\n", sizeof(SenderDataHeader));
 	memcpy(sdh + 1, charBuf, bytes); // copy actual contents after header
@@ -266,13 +284,17 @@ int SenderSocket::Close(double &elapsed_time) {
 	initialize_sockaddr(req, this->targetHost, this->port);
 
 	////////////////////////// finish threads before sending FIN //////////////////////////
-	if ((packet_size = WaitForSingleObject(empty, INFINITE)) == WAIT_FAILED) {// wait for reciever to finish
+	/*if ((packet_size = WaitForSingleObject(empty, INFINITE)) == WAIT_FAILED) {// wait for reciever to finish
+		printf("WaitForSingleObject error %d\n", WSAGetLastError());
+		exit(-1);
+	}*/
+
+	// semaphore closed
+	SetEvent(this->eventQuit); // for calling fin
+	if (WaitForSingleObject(this->finishSend, INFINITE) == WAIT_FAILED) { // for finishing while loop
 		printf("WaitForSingleObject error %d\n", WSAGetLastError());
 		exit(-1);
 	}
-
-	// semaphore closed
-	SetEvent(this->eventQuit);
 	CloseHandle(worker); // join worker thread
 
 	// sets the stat thread to complete so that it knows it is done printing
@@ -368,16 +390,18 @@ void SenderSocket::runWorker(void)
 	while (true)
 	{
 		if (this->retx_count >= 50) {
-			printf("[%.2f] --> 50 retx attempts occured. Exiting...\n", (clock() - this->start_time) / 1000.0);
+			printf("[%.2f] --> 50 retx attempts occured with RTO of %f. Exiting...\n", this->RTO, (clock() - this->start_time) / 1000.0);
 			exit(-1);
 		}
 		// set timeout
-		if (this->s->sender_wind_base + this->s->sender_wind_size <= nextToSend) // if worker and sender dont catch up to each other // pending packets
+		if (this->s->sender_wind_base + this->s->effective_wind_size > nextToSend) // if worker and sender dont catch up to each other // pending packets
 			timeout = this->RTO * 1e3; // also if the sender window + size (end of wind) is not greater than nextToSend (still inside of window)
 		else
 			timeout = INFINITE;
-
-		// printf("timeout is %d\n", timeout);
+		
+		if (this->debug)
+			printf("RUNWORKER(): timeout is %d with nextToSend %d senderbase %d and window size %d\n", timeout, nextToSend, this->s->sender_wind_base, this->s->effective_wind_size);
+		
 		// wait to see if times out or not
 		int ret = WaitForMultipleObjects(2, events, false, timeout);
 		// ret == array index of the object that satisfied the wait
@@ -385,18 +409,17 @@ void SenderSocket::runWorker(void)
 		switch (ret)
 		{
 		case WAIT_TIMEOUT:  // if break occurs, retx buffer here
-			// printf("timeout\n");
 			this->s->timeout_counter++;
+			this->retx_count++;
 			retx = true;
 			// retx this->pending_pkts[this->s->sender_wind_base % this->W];
 			send_packet(this->s->sender_wind_base);
 			break;
 		case 0:	// packet is ready in the socket - get the ACK (socketReceiveReady)
-			// printf("receiveACK\n");
 			retx = receive_ACK(); // move senderBase; fast retx if 3 same ACK
+
 			break;
 		case 1:	// packet is ready in the sender - send the packet (full)
-			// printf("packet send\n");
 			retx = false;
 			send_packet(nextToSend++);
 			break;
@@ -447,12 +470,14 @@ bool SenderSocket::send_packet(int index) { // for Packet type only! // doesn't 
 	}
 	struct sockaddr_in req; // can this be shared across all sends - yes TODO
 	initialize_sockaddr(req, this->targetHost, this->port);
+	beginRTTlist[index % this->W] = clock(); // start RTT timer
 
 	if (sendto(sock, (char*)(this->pending_pkts[index % this->W].buf), this->pending_pkts[index % this->W].size, 0, (struct sockaddr*)&req, sizeof(req)) == SOCKET_ERROR) {
 		printf("Failed in sendto\n");
 		exit(-1);
 	}
-	beginRTTlist[index % this->W] = clock(); // start RTT timer
+	if (this->debug)
+		printf("SEND_PACKET(): packet %d sent\n", index);
 	return true;
 }
 
@@ -474,24 +499,43 @@ bool SenderSocket::receive_ACK() {
 
 	// update stat thread with receiver info
 	ReceiverHeader *rh = (ReceiverHeader*)ans;
+	if (this->debug)
+		printf("RECEIVE_ACK(): ACK %d received\n", rh->ackSeq);
 	// printf("rh->ackSeq %d sender_base %d\t", rh->ackSeq, this->s->sender_wind_base);
 	// check if same ack
 	if (rh->ackSeq == this->s->sender_wind_base) { // if window base is same as ACK value (fast retx counter)
 		this->sameack_count++;
-		if (this->sameack_count >= 3) {
+		if (this->sameack_count == 3) { // only fast retx once
+			// this->sameack_count = 0;
 			send_packet(rh->ackSeq); // fast rext
-			this->sameack_count = 0;
+			if (this->debug)
+				printf("RECEIVE_ACK(): reACKing %d\n", rh->ackSeq);
 			this->s->fast_retx_counter++;
 			this->retx_count++; // STILL DOING DFJDSFKASHFKLDSAFHDKSAL
 			return true; // tells the user to fast rext
 		}
 	}
 	else { // if base is moved
-		ReleaseSemaphore(empty, rh->ackSeq - this->s->sender_wind_base, NULL);
+		// flow control
+		update_receiver_info(rh); // moves the base
+		// how much we can advance the semaphore
+		int newReleased = this->s->sender_wind_base + this->s->effective_wind_size - this->lastReleased;
+		// int newReleased = rh->ackSeq - this->s->sender_wind_base;
+		ReleaseSemaphore(empty, newReleased, NULL);
+		this->lastReleased += newReleased;
+
+		// fast retx counting reset
 		this->retx_count = 0; // for 50 max retx
 		this->sameack_count = 0; // for fast retx
-		update_receiver_info(rh); // moves the base
-		calculate_RTO((endRTT - beginRTTlist[rh->ackSeq % this->W])/1000.0);
+		// update_receiver_info(rh);
+		calculate_RTO((endRTT - beginRTTlist[rh->ackSeq-1 % this->W])/1000.0);
+		if (debug)
+			printf("RECEIVE_ACK(): new RTT is %f with sampleRTT %f and value %d\n", this->s->RTT, (endRTT - beginRTTlist[rh->ackSeq-1 % this->W])/1000.0, rh->ackSeq-1);
+		if (this->lastSeq == rh->ackSeq) {
+			ReleaseSemaphore(this->finishSend, 1, NULL);
+			if (debug)
+				printf("RECEIVE_ACK(): finishSend released\n");
+		}
 	}
 	
 	return false;
@@ -545,7 +589,6 @@ void SenderSocket::update_receiver_info(ReceiverHeader* rh) {
 
 void SenderSocket::calculate_RTO(double sample_RTT) {
 	double alpha = 0.125, beta = 0.25;
-//	this->s->RTT = max((1 - alpha) * this->s->RTT + alpha * sample_RTT, 0.250);
 	this->s->RTT = (1 - alpha) * this->s->RTT + alpha * sample_RTT;
 	devRTT = (1 - beta) * devRTT + beta * fabs(sample_RTT - this->s->RTT);
 	RTO = this->s->RTT + 4 * max(devRTT, 0.010);
