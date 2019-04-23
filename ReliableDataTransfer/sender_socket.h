@@ -37,7 +37,7 @@ class SenderSocket {
 	bool send_packet(int index); // for Packet type only!
 
 	// shared buffer stuff
-	HANDLE eventQuit, empty, full, socketReceiveReady, finishSend;
+	HANDLE empty, full, socketReceiveReady, finishSend;
 	Packet *pending_pkts;
 	int W;
 	int lastReleased;

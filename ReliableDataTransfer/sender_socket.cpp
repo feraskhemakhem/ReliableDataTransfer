@@ -24,7 +24,6 @@ SenderSocket::SenderSocket() {
 	this->s = new StatData(&(this->next_seq));
 	this->s->old_sender_wind_base = this->s->sender_wind_base = 0;
 	this->s->start_time = this->start_time;
-	this->eventQuit = CreateEvent(NULL, true, false, NULL); // TODO: declutter isDone and this into one
 	this->socketReceiveReady = CreateEvent(NULL, false, false, NULL);
 	this->finishSend = CreateSemaphore(NULL, 0, 1, NULL); // semaphore to wait for worker to finish
 	devRTT = 0;
@@ -188,6 +187,7 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 	this->stat = CreateThread(NULL, 0, statThread, s, 0, NULL);
 	// start worker thread
 	this->worker = CreateThread(NULL, 0, workerThread, this, 0, NULL);
+	SetThreadAffinityMask(this->worker, 2); // for optimization - puts all the work on the 2nd core
 	
 	
 	// flow control
@@ -291,7 +291,6 @@ int SenderSocket::Close(double &elapsed_time) {
 	}*/
 
 	// semaphore closed
-	SetEvent(this->eventQuit); // for calling fin
 	if (WaitForSingleObject(this->finishSend, INFINITE) == WAIT_FAILED) { // for finishing while loop
 		printf("WaitForSingleObject error %d\n", WSAGetLastError());
 		exit(-1);
@@ -498,7 +497,7 @@ void SenderSocket::receive_ACK() {
 	int response_size = sizeof(response);
 
 	// in theory select told us that sock is ready to recvfrom, so no need to reattempt
-	if (recvfrom(sock, ans, MAX_PKT_SIZE, 0, (struct sockaddr*)&response, &response_size) == SOCKET_ERROR) {
+	if ((packet_size = recvfrom(sock, ans, MAX_PKT_SIZE, 0, (struct sockaddr*)&response, &response_size)) == SOCKET_ERROR) {
 		printf("[%.2f] <-- failed recvfrom with %d\n", (double)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
 		exit(-1);
 	}
