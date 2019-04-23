@@ -8,7 +8,7 @@
 #include "sender_socket.h"
 #include "checksum.h"
 
-bool Debug = false;
+//bool Debug = false;
 
 void transfer(char* argv[]) {
 
@@ -43,7 +43,7 @@ void transfer(char* argv[]) {
 	lp.pLoss[RETURN_PATH] = atof(argv[6]);
 	lp.bufferSize = senderWindow + 3; // window size + max number of retransmissions, which is 3 for Open
 	SenderSocket ss; // instance of your class
-	if ((status = ss.Open(targetHost, MAGIC_PORT, senderWindow, &lp, Debug)) != STATUS_OK) {
+	if ((status = ss.Open(targetHost, MAGIC_PORT, senderWindow, &lp)) != STATUS_OK) {
 		// error handling: print status and quit
 		printf("Main:\tconnect failed with status %d\n", status);
 		exit(-1);
@@ -63,13 +63,14 @@ void transfer(char* argv[]) {
 		// decide the size of next chunk
 		int bytes = min(byteBufferSize - off, MAX_PKT_SIZE - sizeof(SenderDataHeader));
 		// send chunk into socket
-		if ((status = ss.Send(charBuf + off, bytes, (off+bytes < byteBufferSize)? 2 : 3)) != STATUS_OK) {
+		if ((status = ss.Send(charBuf + off, bytes, (off + bytes < byteBufferSize) ? 2 : 3)) != STATUS_OK) {
 			// error handling: print status and quit
 			printf("Main:\t connect failed with status %d\n", status);
 			exit(-1);
 		}
 		off += bytes;
 	}
+	//ss.set_last();
 
 	double elapsed_time; // elapsed time from first send to last ACK non-FIN
 
@@ -114,13 +115,13 @@ int main(int argc, char* argv[])
 	
 	/////////////////////////////// command line error checking ///////////////////////////////
 	// parse command-line parameters
-	if (argc != 8 && argc != 9) { // check for valid number of parameters
+	if (argc != 8) { // check for valid number of parameters
 		printf("Incorrect number of arguments. Please rerun with seven command-line arguments\n");
 		exit(-1);
 	}
-	if (argc == 9) {
+	/*if (argc == 9) {
 		Debug = true;
-	}
+	}*/
 	
 	// error checking
 	if (atoi(argv[7]) <= 0 || atoi(argv[7]) > 1e4) { // assuming 1000 Mb is 1 Gb

@@ -59,13 +59,12 @@ SenderSocket::~SenderSocket() {
 }
 
 /******************** OPEN ********************/
-int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperties* link_prop, bool debug) {
-	this->debug = debug;
+int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperties* link_prop) {
+	//this->debug = debug;
 	/////////////////////// initializations ///////////////////////
 	this->s->sender_wind_size = this->W = window_size;
 	this->s->RTT = link_prop->RTT;
 	this->RTO = max(1.0, 2 * this->s->RTT);
-	this->beginRTTlist = new clock_t[this->W];
 
 	// initalize sempahore handles - TODO: MOVE THIS AROUND SO THAT IT USES EFFECTIVE WINDOW SIZE
 	this->full = CreateSemaphore(NULL, 0, window_size, NULL);
@@ -129,7 +128,7 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 
 		////////////////////////// send request to the server //////////////////////////
 		if ((packet_size = sendto(sock, (char*)&sh, sizeof(SenderSynHeader), 0, (struct sockaddr*)&request, sizeof(request))) == SOCKET_ERROR) {
-			printf("[%.2f] --> failed sendto with %d\n", (float)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
+			printf("[%.2f] --> failed sendto with %d\n", (double)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
 			return FAILED_SEND;
 		}
 
@@ -138,12 +137,12 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 		// increase incoming and outgoing capacity
 		int kernelBuffer = 20e6; // 20 meg
 		if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (char*)&kernelBuffer, sizeof(int)) == SOCKET_ERROR) {
-			printf("[%.2f] --> failed setsockopt rcvbuf %d\n", (float)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
+			printf("[%.2f] --> failed setsockopt rcvbuf %d\n", (double)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
 			return FAILED_SEND;
 		}
 		kernelBuffer = 20e6; // 20 meg
 		if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, (char*)&kernelBuffer, sizeof(int)) == SOCKET_ERROR) {
-			printf("[%.2f] --> failed setsockopt sndbuf %d\n", (float)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
+			printf("[%.2f] --> failed setsockopt sndbuf %d\n", (double)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
 			return FAILED_SEND;
 		}
 		// return of the handshake
@@ -172,7 +171,7 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 
 	// in theory select told us that sock is ready to recvfrom, so no need to reattempt
 	if ((packet_size = recvfrom(sock, ans, MAX_PKT_SIZE, 0, (struct sockaddr*)&response, &response_size)) == SOCKET_ERROR) {
-		printf("[%.2f] <-- failed recvfrom with %d\n", (float)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
+		printf("[%.2f] <-- failed recvfrom with %d\n", (double)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
 		return FAILED_RECV;
 	}
 
@@ -182,7 +181,7 @@ int SenderSocket::Open(char* targetHost, int port, int window_size, LinkProperti
 
 	// RTO calculation
 	endRTT = clock();
-	elapsed_time = (float)(endRTT - beginRTT)/CLOCKS_PER_SEC; // updating to get elapsed time for print after function is complete, in the main
+	elapsed_time = (double)(endRTT - beginRTT)/CLOCKS_PER_SEC; // updating to get elapsed time for print after function is complete, in the main
 	calculate_RTO(elapsed_time);
 
 	// start stat thread
@@ -215,8 +214,9 @@ int SenderSocket::Send(char* charBuf, int bytes, int type) {
 	}
 	
 	////////////////////////// insert packet to semaphore //////////////////////////
-	HANDLE arr[] = { eventQuit, empty };
-	WaitForMultipleObjects(2, arr, false, INFINITE);
+	// HANDLE arr[] = { eventQuit, empty };
+	// WaitForMultipleObjects(2, arr, false, INFINITE);
+	WaitForSingleObject(empty, INFINITE);
 
 	// no need for mutex as no shared variables are modified
 	int slot = this->next_seq % this->W;
@@ -228,12 +228,11 @@ int SenderSocket::Send(char* charBuf, int bytes, int type) {
 	// printf("%d\n", bytes + sizeof(SenderDataHeader));
 
 	// set up remaining fields in sdh and p
-	p->seq = this->next_seq;
+	p->seq = sdh->seq = this->next_seq;
 	p->type = type; // data
 	p->size = sizeof(SenderDataHeader) + bytes;
-	p->txTime = clock();
 	sdh->flags = Flags(); // defaulted to 0's with memset
-	switch (type) {
+	/*switch (type) {
 		case 0:
 			sdh->flags.SYN = 1;
 			break;
@@ -245,18 +244,17 @@ int SenderSocket::Send(char* charBuf, int bytes, int type) {
 			if (this->debug)
 				printf("SEND(): lastSeq is %d\n", this->lastSeq);
 			break;
-	}
-	/*if (type == 0) // if ACK
-		sdh->flags.SYN = 1;
-	if (type == 1) // if FIN
-		sdh->flags.FIN = 1;*/
-	sdh->seq = this->next_seq;
+	}*/
+	if (type == 3)
+	 	this->lastSeq = this->next_seq + 1;
+	// sdh->seq = this->next_seq;
 	// printf("Size senderdata %d\n", sizeof(SenderDataHeader));
 	memcpy(sdh + 1, charBuf, bytes); // copy actual contents after header
 
 	next_seq++; // for next packet
 	ReleaseSemaphore(full, 1, NULL);	
-	InterlockedIncrement(&(this->pending_packets));
+	//InterlockedIncrement(&(this->pending_packets));
+	this->pending_packets++;
 	// printf("SEND(): pending %ld\n", this->pending_packets);
 
 	// send request (by worker thread!)
@@ -283,8 +281,8 @@ int SenderSocket::Close(double &elapsed_time) {
 	// set timeout to RTO
 	// tp.tv_usec = (this->RTO - int(this->RTO))*1e6; // get the decimals of the RTO
 	// tp.tv_sec = int(this->RTO); // get the full seconds of RTO
-	struct sockaddr_in req;
-	initialize_sockaddr(req, this->targetHost, this->port);
+	// struct sockaddr_in req;
+	// initialize_sockaddr(req, this->targetHost, this->port);
 
 	////////////////////////// finish threads before sending FIN //////////////////////////
 	/*if ((packet_size = WaitForSingleObject(empty, INFINITE)) == WAIT_FAILED) {// wait for reciever to finish
@@ -299,8 +297,6 @@ int SenderSocket::Close(double &elapsed_time) {
 		exit(-1);
 	}
 	CloseHandle(worker); // join worker thread
-	if(debug)
-		Sleep(2000);
 	// sets the stat thread to complete so that it knows it is done printing
 	SetEvent(this->s->isDone); // trigger waitforoneobject
 	CloseHandle(stat); // join
@@ -323,19 +319,19 @@ int SenderSocket::Close(double &elapsed_time) {
 	sh.sdh = sender_data;
 	sh.lp = *(this->link_prop);
 
-	elapsed_time = (float)(clock() - begin_transfer) / CLOCKS_PER_SEC;
+	elapsed_time = (double)(clock() - begin_transfer) / CLOCKS_PER_SEC;
 
 	for (int i = 1; i <=6; ++i) {
 		// tried too many times
 		if (i == 6) return TIMEOUT;
 
 		////////////////////////// send request to the server //////////////////////////
-		if ((packet_size = sendto(sock, (char*)&sh, sizeof(SenderSynHeader), 0, (struct sockaddr*)&req, sizeof(req))) == SOCKET_ERROR) {
-			printf("[%.2f] --> failed sendto with %d\n", (float)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
+		if ((packet_size = sendto(sock, (char*)&sh, sizeof(SenderSynHeader), 0, (struct sockaddr*)&(this->request), sizeof(this->request))) == SOCKET_ERROR) {
+			printf("[%.2f] --> failed sendto with %d\n", (double)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
 			return FAILED_SEND;
 		}
 
-		beginRTT = (float)(clock() - this->start_time) / CLOCKS_PER_SEC; // elapsed open is used for elapsed time if SYN and SYN-ACK work
+		beginRTT = (double)(clock() - this->start_time) / CLOCKS_PER_SEC; // elapsed open is used for elapsed time if SYN and SYN-ACK work
 		// printf("[%.2f] --> FIN %d (attempt %d of %d, RTO %.3f)\n", beginRTT, this->next_seq, i, 5, this->RTO);
 
 		// return of the handshake
@@ -359,20 +355,20 @@ int SenderSocket::Close(double &elapsed_time) {
 	int response_size = sizeof(response);
 
 	// in theory select told us that sock is ready to recvfrom, so no need to reattempt
-	if ((packet_size = recvfrom(sock, ans, MAX_PKT_SIZE, 0, (struct sockaddr*)&response, &response_size)) == SOCKET_ERROR) {
-		printf("[%.2f] <-- failed recvfrom with %d\n", (float)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
+	if (recvfrom(sock, ans, MAX_PKT_SIZE, 0, (struct sockaddr*)&response, &response_size) == SOCKET_ERROR) {
+		printf("[%.2f] <-- failed recvfrom with %d\n", (double)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
 		return FAILED_RECV;
 	}
-	endRTT = clock();
+	//endRTT = clock();
 	update_receiver_info((ReceiverHeader*)ans);
 
-	printf("[%.2f] <-- FIN-ACK %d window %X\n", (float)(endRTT - this->start_time) / CLOCKS_PER_SEC, *(this->s->next_seq), this->s->receiver_wind_size);
+	printf("[%.2f] <-- FIN-ACK %d window %X\n", (double)(clock() - this->start_time) / CLOCKS_PER_SEC, *(this->s->next_seq), this->s->receiver_wind_size);
 
 
 	// close socket to end communication... if already closed or not open, error will yield
 	if (closesocket(sock) == SOCKET_ERROR) {
 		// should not even get here
-		printf("[%.2f] --> failed to close socket with %d\n", (float)(clock() - start_time) / CLOCKS_PER_SEC, WSAGetLastError()); // check if this is how they want it
+		printf("[%.2f] --> failed to close socket with %d\n", (double)(clock() - start_time) / CLOCKS_PER_SEC, WSAGetLastError()); // check if this is how they want it
 		return NOT_CONNECTED;
 	}
 	sock = INVALID_SOCKET;
@@ -388,24 +384,28 @@ int SenderSocket::Close(double &elapsed_time) {
 void SenderSocket::runWorker(void)
 {
 	int old_wind_base = this->s->sender_wind_base;
-	bool retx = false;
+	// bool retx = false;
 	DWORD timeout;
 	HANDLE events[] = { socketReceiveReady, full };
+	//long zero = 0;
 	while (true)
 	{
 		if (this->retx_count >= 50) { // skip packet if too many retx
-			printf("[%.2f] --> 50+ retx attempts occured with packet %d\n", (float)(clock() - this->start_time) / CLOCKS_PER_SEC, this->s->sender_wind_base);
-			InterlockedDecrement(&(this->pending_packets)); // 1 time for just base
+			printf("[%.2f] --> 50+ retx attempts occured with packet %d\n", (double)(clock() - this->start_time) / CLOCKS_PER_SEC, this->s->sender_wind_base);
+			//InterlockedDecrement(&(this->pending_packets)); // 1 time for just base
+			this->pending_packets--;
 			ReleaseSemaphore(empty, 1, NULL);
+			this->s->sender_wind_base++;
+			this->retx_count = 0;
 		}
 		// set timeout
-		if (this->pending_packets != (long)0) // if worker and sender dont catch up to each other // pending packets
+		if (this->pending_packets != 0) // if worker and sender dont catch up to each other // pending packets
 			timeout = this->RTO * 1e3; // also if the sender window + size (end of wind) is not greater than nextToSend (still inside of window)
-		else {
+		else
 			timeout = INFINITE;
-			if (debug)
-				printf("RUNWORKER(): timeout is %d with nextToSend %d senderbase %d and window size %d\n", timeout, nextToSend, this->s->sender_wind_base, this->s->effective_wind_size);
-		}
+			// if (debug)
+			// printf("RUNWORKER(): timeout is %d with nextToSend %d senderbase %d and window size %d\n", timeout, nextToSend, this->s->sender_wind_base, this->s->effective_wind_size);
+		
 		// printf("RUNWORKER(): pending_packets is %ld\n", this->pending_packets);
 		// wait to see if times out or not
 		int ret = WaitForMultipleObjects(2, events, false, timeout);
@@ -416,32 +416,32 @@ void SenderSocket::runWorker(void)
 		case WAIT_TIMEOUT:  // if break occurs, retx buffer here
 			this->s->timeout_counter++;
 			this->retx_count++;
-			retx = true;
+			// retx = true;
 			// retx this->pending_pkts[this->s->sender_wind_base % this->W];
-			if (debug)
-				printf("RUNWORKER(): TIMEOUT %d\n", this->s->sender_wind_base);
+			// printf("RUNWORKER(): TIMEOUT %d\n", this->s->sender_wind_base);
 			send_packet(this->s->sender_wind_base);
 			break;
 		case 0:	// packet is ready in the socket - get the ACK (socketReceiveReady)
-			retx = receive_ACK(); // move senderBase; fast retx if 3 same ACK
+			// retx = receive_ACK(); // move senderBase; fast retx if 3 same ACK
+			receive_ACK();
 
 			break;
 		case 1:	// packet is ready in the sender - send the packet (full)
-			retx = false;
+			// retx = false;
 			send_packet(nextToSend++);
 			break;
 			// 
 		default:// errored out - WAIT_FAILED D:
-			printf("[%.2f] --> WaitForMultipleObjects failed in worker thread.\nExiting...\n", (float)(clock() - start_time) / CLOCKS_PER_SEC);
+			printf("[%.2f] --> WaitForMultipleObjects failed in worker thread.\nExiting...\n", (double)(clock() - start_time) / CLOCKS_PER_SEC);
 			exit(-1);
 		}
-		if (nextToSend == this->s->sender_wind_base || retx // first packet of window or just did a retx(timeout / 3 - dup ACK
-			|| this->s->sender_wind_base != old_wind_base) { // senderBase moved forward
+		//if (nextToSend == this->s->sender_wind_base || retx // first packet of window or just did a retx(timeout / 3 - dup ACK
+		//	|| this->s->sender_wind_base != old_wind_base) { // senderBase moved forward
 			// printf("timer reset\n");
-			old_wind_base = this->s->sender_wind_base; // in case the base moved forward, for later checks
-			//this->calculate_RTO((float)(endRTT - beginRTT)/ CLOCKS_PER_SEC);
-			beginRTT = clock();
-		}
+			//old_wind_base = this->s->sender_wind_base; // in case the base moved forward, for later checks
+			//this->calculate_RTO((double)(endRTT - beginRTT)/ CLOCKS_PER_SEC);
+			// beginRTT = clock();
+		// }
 	}
 }
 
@@ -475,22 +475,21 @@ bool SenderSocket::send_packet(int index) { // for Packet type only! // doesn't 
 	if (index == 0) { // if this is the first packet - TODO: if we use buf with SYN, change to 1
 		begin_transfer = clock();
 	}
-	struct sockaddr_in req; // can this be shared across all sends - yes TODO
-	initialize_sockaddr(req, this->targetHost, this->port);
-	beginRTTlist[index % this->W] = clock(); // start RTT timer
+	// struct sockaddr_in req; // can this be shared across all sends - yes TODO
+	// initialize_sockaddr(req, this->targetHost, this->port);
 	this->pending_pkts[index % this->W].txTime = clock();
 
-	if (sendto(sock, (char*)(this->pending_pkts[index % this->W].buf), this->pending_pkts[index % this->W].size, 0, (struct sockaddr*)&req, sizeof(req)) == SOCKET_ERROR) {
-		printf("Failed in sendto\n");
+	if (sendto(sock, (char*)(this->pending_pkts[index % this->W].buf), this->pending_pkts[index % this->W].size, 0, (struct sockaddr*)&(this->request), sizeof(this->request)) == SOCKET_ERROR) {
+		printf("[%2f] <-- Failed in sendto with %d\n", (double)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
 		exit(-1);
 	}
-	if (this->debug)
-		printf("SEND_PACKET(): packet %d sent\n", index);
+	//if (this->debug)
+	//	printf("SEND_PACKET(): packet %d sent\n", index);
 	return true;
 }
 
 //////////////////// send packet function //////////////////// 
-bool SenderSocket::receive_ACK() {	
+void SenderSocket::receive_ACK() {	
 //	ResetEvent(this->socketReceiveReady); // reset socket to not ready
 
 	// initializations for receiving
@@ -499,33 +498,34 @@ bool SenderSocket::receive_ACK() {
 	int response_size = sizeof(response);
 
 	// in theory select told us that sock is ready to recvfrom, so no need to reattempt
-	if ((packet_size = recvfrom(sock, ans, MAX_PKT_SIZE, 0, (struct sockaddr*)&response, &response_size)) == SOCKET_ERROR) {
-		printf("[%.2f] <-- failed recvfrom with %d\n", (float)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
+	if (recvfrom(sock, ans, MAX_PKT_SIZE, 0, (struct sockaddr*)&response, &response_size) == SOCKET_ERROR) {
+		printf("[%.2f] <-- failed recvfrom with %d\n", (double)(clock() - this->start_time) / CLOCKS_PER_SEC, WSAGetLastError());
 		exit(-1);
 	}
-	endRTT = clock();
 
 	// update stat thread with receiver info
 	ReceiverHeader *rh = (ReceiverHeader*)ans;
-	if (this->debug)
-		printf("RECEIVE_ACK(): ACK %d received\n", rh->ackSeq);
+	int ack = rh->ackSeq;
+	//if (this->debug)
+	//	printf("RECEIVE_ACK(): ACK %d received\n", rh->ackSeq);
 	// printf("rh->ackSeq %d sender_base %d\t", rh->ackSeq, this->s->sender_wind_base);
 	// check if same ack
-	if (rh->ackSeq == this->s->sender_wind_base) { // if window base is same as ACK value (fast retx counter)
+	if (ack == this->s->sender_wind_base) { // if window base is same as ACK value (fast retx counter)
 		this->sameack_count++;
 		if (this->sameack_count == 3) { // only fast retx once
 			// this->sameack_count = 0;
-			send_packet(rh->ackSeq); // fast rext
-			if (this->debug)
-				printf("RECEIVE_ACK(): reACKing %d\n", rh->ackSeq);
+			send_packet(ack); // fast rext
+			// if (this->debug)
+			//	printf("RECEIVE_ACK(): reACKing %d\n", rh->ackSeq);
 			this->s->fast_retx_counter++;
 			this->retx_count++; // STILL DOING DFJDSFKASHFKLDSAFHDKSAL
-			return true; // tells the user to fast rext
+			// return true; // tells the user to fast rext
 		}
 	}
 	else { // if base is moved
 		// pending packets update
-		InterlockedAdd(&(this->pending_packets), (long)(this->s->sender_wind_base - rh->ackSeq)); // difference between sender wind base and ackseq many times
+		// InterlockedAdd(&(this->pending_packets), (long)(this->s->sender_wind_base - ack)); // difference between sender wind base and ackseq many times
+		this->pending_packets += this->s->sender_wind_base - ack;
 
 		// flow control
 		update_receiver_info(rh); // moves the base
@@ -537,26 +537,25 @@ bool SenderSocket::receive_ACK() {
 
 		// fast retx counting reset
 		// update_receiver_info(rh);
-		// calculate_RTO((float)(endRTT - beginRTTlist[rh->ackSeq-1 % this->W])/ CLOCKS_PER_SEC);
-		if (this->retx_count == 0) { // no prior retx and on x + y - 1, not x + y
-			calculate_RTO((float)(endRTT - this->pending_pkts[(rh->ackSeq - 1) % this->W].txTime) / CLOCKS_PER_SEC);
-			if (debug)
-				printf("RECEIVE_ACK(): new RTT is %f with sampleRTT %f and value %d for endRTT %f and beginRTT %f\n", this->s->RTT, (float)(endRTT - this->pending_pkts[(rh->ackSeq - 1) % this->W].txTime) / CLOCKS_PER_SEC, rh->ackSeq - 1, (float)(clock() - endRTT) / CLOCKS_PER_SEC, (float)(clock() - this->pending_pkts[(rh->ackSeq - 1) % this->W].txTime) / CLOCKS_PER_SEC);
-		}
-		else {
-			if (debug)
-				printf("RECEIVE_ACK(): value %d and same RTO", rh->ackSeq - 1);
-		}
+		if (this->retx_count == 0)  // no prior retx and on x + y - 1, not x + y
+			calculate_RTO((double)(clock() - this->pending_pkts[(ack - 1) % this->W].txTime) / CLOCKS_PER_SEC);
+			//if (debug)
+			//	printf("RECEIVE_ACK(): new RTT is %f with sampleRTT %f and value %d for endRTT %f and beginRTT %f\n", this->s->RTT, (double)(endRTT - this->pending_pkts[(rh->ackSeq - 1) % this->W].txTime) / CLOCKS_PER_SEC, rh->ackSeq - 1, (double)(clock() - endRTT) / CLOCKS_PER_SEC, (double)(clock() - this->pending_pkts[(rh->ackSeq - 1) % this->W].txTime) / CLOCKS_PER_SEC);
+		//}
+		//else {
+			// if (debug)
+			//	printf("RECEIVE_ACK(): value %d and same RTO", rh->ackSeq - 1);
+		//}
 		this->retx_count = 0; // for 50 max retx
 		this->sameack_count = 0; // for fast retx
-		if (this->lastSeq == rh->ackSeq) {
+		if (this->lastSeq == ack) {
 			ReleaseSemaphore(this->finishSend, 1, NULL);
-			if (debug)
-				printf("RECEIVE_ACK(): finishSend released with remaining_packets at %ld\n", this->pending_packets);
+			// if (debug)
+			//	printf("RECEIVE_ACK(): finishSend released with remaining_packets at %ld\n", this->pending_packets);
 		}
 	}
 	
-	return false;
+	// return false;
 }
 
 
@@ -580,7 +579,7 @@ int SenderSocket::initialize_sockaddr(struct sockaddr_in& server, char* host, in
 			// if not a valid IP, then do a DNS lookup
 			if ((remote = gethostbyname(host)) == NULL)
 			{
-				printf("[%.2f] --> target %s is invalid\n", (float)(clock() - start_time) / CLOCKS_PER_SEC, host);
+				printf("[%.2f] --> target %s is invalid\n", (double)(clock() - start_time) / CLOCKS_PER_SEC, host);
 				return INVALID_NAME;
 			}
 			else { // take the first IP address and copy into sin_addr 
