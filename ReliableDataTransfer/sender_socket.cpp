@@ -253,8 +253,8 @@ int SenderSocket::Send(char* charBuf, int bytes, int type) {
 
 	next_seq++; // for next packet
 	ReleaseSemaphore(full, 1, NULL);	
-	//InterlockedIncrement(&(this->pending_packets));
-	this->pending_packets++;
+	InterlockedIncrement(&(this->pending_packets));
+	//this->pending_packets++;
 	// printf("SEND(): pending %ld\n", this->pending_packets);
 
 	// send request (by worker thread!)
@@ -387,19 +387,19 @@ void SenderSocket::runWorker(void)
 	// bool retx = false;
 	DWORD timeout;
 	HANDLE events[] = { socketReceiveReady, full };
-	//long zero = 0;
+	long zero = 0;
 	while (true)
 	{
 		if (this->retx_count >= 50) { // skip packet if too many retx
 			printf("[%.2f] --> 50+ retx attempts occured with packet %d\n", (double)(clock() - this->start_time) / CLOCKS_PER_SEC, this->s->sender_wind_base);
-			//InterlockedDecrement(&(this->pending_packets)); // 1 time for just base
-			this->pending_packets--;
+			InterlockedDecrement(&(this->pending_packets)); // 1 time for just base
+			//this->pending_packets--;
 			ReleaseSemaphore(empty, 1, NULL);
 			this->s->sender_wind_base++;
 			this->retx_count = 0;
 		}
 		// set timeout
-		if (this->pending_packets != 0) // if worker and sender dont catch up to each other // pending packets
+		if (this->pending_packets != zero) // if worker and sender dont catch up to each other // pending packets
 			timeout = this->RTO * 1e3; // also if the sender window + size (end of wind) is not greater than nextToSend (still inside of window)
 		else
 			timeout = INFINITE;
@@ -524,8 +524,8 @@ void SenderSocket::receive_ACK() {
 	}
 	else { // if base is moved
 		// pending packets update
-		// InterlockedAdd(&(this->pending_packets), (long)(this->s->sender_wind_base - ack)); // difference between sender wind base and ackseq many times
-		this->pending_packets += this->s->sender_wind_base - ack;
+		InterlockedAdd(&(this->pending_packets), (long)(this->s->sender_wind_base - ack)); // difference between sender wind base and ackseq many times
+		//this->pending_packets += this->s->sender_wind_base - ack;
 
 		// flow control
 		update_receiver_info(rh); // moves the base
@@ -551,7 +551,7 @@ void SenderSocket::receive_ACK() {
 		if (this->lastSeq == ack) {
 			ReleaseSemaphore(this->finishSend, 1, NULL);
 			// if (debug)
-			//	printf("RECEIVE_ACK(): finishSend released with remaining_packets at %ld\n", this->pending_packets);
+			printf("RECEIVE_ACK(): finishSend released with remaining_packets at %ld\n", this->pending_packets);
 		}
 	}
 	

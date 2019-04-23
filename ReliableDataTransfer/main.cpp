@@ -63,7 +63,7 @@ void transfer(char* argv[]) {
 		// decide the size of next chunk
 		int bytes = min(byteBufferSize - off, MAX_PKT_SIZE - sizeof(SenderDataHeader));
 		// send chunk into socket
-		if ((status = ss.Send(charBuf + off, bytes, (off + bytes < byteBufferSize) ? 2 : 3)) != STATUS_OK) {
+		if ((status = ss.Send(charBuf + off, bytes, (off+bytes < byteBufferSize) ? 2 : 3)) != STATUS_OK) {
 			// error handling: print status and quit
 			printf("Main:\t connect failed with status %d\n", status);
 			exit(-1);

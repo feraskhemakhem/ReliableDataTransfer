@@ -43,7 +43,7 @@ class SenderSocket {
 	int lastReleased;
 	int lastSeq;  // send tells the worker thread that this is the last packet, after which fin can send
 	//long pending_packets;
-	int pending_packets;
+	long pending_packets;
 
 	// thread functions
 	clock_t timer_expire; // time for base packet so be sent
