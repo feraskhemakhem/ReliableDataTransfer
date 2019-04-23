@@ -550,7 +550,7 @@ void SenderSocket::receive_ACK() {
 		if (this->lastSeq == ack) {
 			ReleaseSemaphore(this->finishSend, 1, NULL);
 			// if (debug)
-			printf("RECEIVE_ACK(): finishSend released with remaining_packets at %ld\n", this->pending_packets);
+			// printf("RECEIVE_ACK(): finishSend released with remaining_packets at %ld\n", this->pending_packets);
 		}
 	}
 	
