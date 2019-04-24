@@ -85,6 +85,6 @@ struct StatData {
 	double get_data_ACKed() {
 		return this->sender_wind_base * (MAX_PKT_SIZE - sizeof(SenderDataHeader)) * 1e-6; // MB, not Mb
 	}
-	StatData(int* val) { memset(this, 0, sizeof(*this)); this->isDone = CreateEventA(NULL, true, false, NULL); next_seq = val; } // itialize all variables to 0
+	StatData(int* val) { memset(this, 0, sizeof(*this)); this->isDone = CreateEvent(NULL, true, false, NULL); next_seq = val; } // itialize all variables to 0
 };
 

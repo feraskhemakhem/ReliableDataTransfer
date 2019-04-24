@@ -8,6 +8,8 @@
 #include "sender_socket.h"
 #include "checksum.h"
 
+//bool Debug = false;
+
 void transfer(char* argv[]) {
 
 	// variables for later
@@ -61,13 +63,14 @@ void transfer(char* argv[]) {
 		// decide the size of next chunk
 		int bytes = min(byteBufferSize - off, MAX_PKT_SIZE - sizeof(SenderDataHeader));
 		// send chunk into socket
-		if ((status = ss.Send(charBuf + off, bytes)) != STATUS_OK) {
+		if ((status = ss.Send(charBuf + off, bytes, (off+bytes < byteBufferSize) ? 2 : 3)) != STATUS_OK) {
 			// error handling: print status and quit
 			printf("Main:\t connect failed with status %d\n", status);
 			exit(-1);
 		}
 		off += bytes;
 	}
+	//ss.set_last();
 
 	double elapsed_time; // elapsed time from first send to last ACK non-FIN
 
@@ -80,8 +83,8 @@ void transfer(char* argv[]) {
 	}
 
 	DWORD check = cs.CRC32((unsigned char*)charBuf, byteBufferSize);
-	printf("Main:\ttransfer finished in %.3f sec, %.2f Kbps, checksum %X\n", elapsed_time, off/elapsed_time, check); // elapsed time is between first non-SYN sent and last non-FIN ACK
-	printf("Main:\testRTT %.3f, ideal rate %.2f\n", ss.get_estRTT(), ss.calcualte_ideal_rate());
+	printf("Main:\ttransfer finished in %.3f sec, %.2f Kbps, checksum %X\n", elapsed_time, off/(elapsed_time*1e3), check); // elapsed time is between first non-SYN sent and last non-FIN ACK
+	printf("Main:\testRTT %.3f, ideal rate %.2f Kbbps\n", ss.get_estRTT(), ss.calcualte_ideal_rate());
 		
 }
 
@@ -96,7 +99,8 @@ int main(int argc, char* argv[])
 	 * (4) round-trip propogration delay (RTT)
 	 * (5) probability of loss in forward path
 	 * (6) probability of loss in return path
-	 * (6) speed of bottlenecked link (Mbps)
+	 * (7) speed of bottlenecked link (Mbps)
+	 * (optional) debug mode
 	*/
 
 	WSADATA wsaData;
@@ -115,6 +119,9 @@ int main(int argc, char* argv[])
 		printf("Incorrect number of arguments. Please rerun with seven command-line arguments\n");
 		exit(-1);
 	}
+	/*if (argc == 9) {
+		Debug = true;
+	}*/
 	
 	// error checking
 	if (atoi(argv[7]) <= 0 || atoi(argv[7]) > 1e4) { // assuming 1000 Mb is 1 Gb

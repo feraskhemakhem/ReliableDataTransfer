@@ -1,3 +1,3 @@
 # ReliableDataTransfer
 
-Part 2 implements connection sending packets and receiving ACKs when sender window is 1 (synchronous).
+Part 3 implements connection sending packets and receiving ACKs when sender windows greater than 1 (asynchronously).
